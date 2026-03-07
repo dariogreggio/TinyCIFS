@@ -8,7 +8,7 @@
 #if defined(USA_WIFI) || defined(USA_ETHERNET)
 extern uint8_t internetBuffer[256];
 extern BYTE rxBuffer[1536];
-extern WORD rxBufferLen,internetBufferLen;
+extern WORD rxBufferLen;
 #endif
 
 //https://amitschendel1.medium.com/smb-going-from-zero-to-hero-ff686e907e81
@@ -18,7 +18,7 @@ void CIFSInit(NETWORKDISK_STRUCT *cifs,uint8_t ver,uint8_t m,uint8_t sec) {
   cifs->version=ver;
   cifs->mode=m;
   cifs->security=sec;
-	cifs->FTPCFlags.Bits.bConnectedC=FALSE;
+	cifs->Flags.Bits.bConnectedD=FALSE;
 	cifs->msgcnt=0;
 	cifs->processid=rand();			// sarebbe long ma ok
 	cifs->sessionid=0;
@@ -30,19 +30,19 @@ void CIFSInit(NETWORKDISK_STRUCT *cifs,uint8_t ver,uint8_t m,uint8_t sec) {
 	}
 
 
-BOOL CIFSConnect(NETWORKDISK_STRUCT *cifs,const char * s) {
+int8_t CIFSConnect(NETWORKDISK_STRUCT *cifs,const char *s) {
   struct sockaddr_in strAddr;
   uint16_t tOut;
   int retVal=0;
   
-  cifs->FTPCFlags.Val &= ~0x7f;
-  StringToIPAddress(cifs->HostName,(IP_ADDR*)&cifs->HostIP.Val);
-  //cifs->cSocket = TCPOpen((DWORD)&cifs->HostName, TCP_OPEN_RAM_HOST, FTP_COMMAND_PORT, TCP_PURPOSE_FTP_COMMAND);
+  cifs->Flags.Val &= ~0x7f;
+  StringToIPAddress(s,(IP_ADDR*)&cifs->HostIP.Val);
+  //cifs->sSocket = TCPOpen((DWORD)&cifs->HostName, TCP_OPEN_RAM_HOST, FTP_COMMAND_PORT, TCP_PURPOSE_FTP_COMMAND);
 #ifdef USA_ETHERNET
-  cifs->cSocket = TCPOpen(strAddr.sin_addr.s_addr, TCP_OPEN_IP_ADDRESS, FTP_PORT, TCP_PURPOSE_FTP_COMMAND);
+  cifs->sSocket = TCPOpen(strAddr.sin_addr.s_addr, TCP_OPEN_IP_ADDRESS, FTP_PORT, TCP_PURPOSE_FTP_COMMAND);
 
-  //if(cifs->dSocket == INVALID_SOCKET)
-  // cifs->dSocket = TCPOpen(0, TCP_OPEN_SERVER, cifs->FTPCDataPort, TCP_PURPOSE_FTP_DATA);
+  //if(cifs->sSocket == INVALID_SOCKET)
+  // cifs->sSocket = TCPOpen(0, TCP_OPEN_SERVER, cifs->FTPCDataPort, TCP_PURPOSE_FTP_DATA);
 #endif
 #ifdef USA_WIFI
   BYTE u8Flags=0;   // boh??
@@ -57,7 +57,7 @@ BOOL CIFSConnect(NETWORKDISK_STRUCT *cifs,const char * s) {
       __delay_ms(1);
       }
     strAddr.sin_addr.s_addr=cifs->HostIP.Val=*(unsigned long*)internetBuffer;
-    if(cifs->FTPCFlags.Bits.debug)
+    if(cifs->Flags.Bits.debug)
       printf(" (%u.%u.%u.%u)\n",cifs->HostIP.v[0],cifs->HostIP.v[1],cifs->HostIP.v[2],cifs->HostIP.v[3]);
     }
   else 
@@ -66,14 +66,14 @@ BOOL CIFSConnect(NETWORKDISK_STRUCT *cifs,const char * s) {
     retVal=-1;
     goto fine;
     }
-  cifs->cSocket = socket(AF_INET,SOCK_STREAM,u8Flags);
+  cifs->sSocket = socket(AF_INET,SOCK_STREAM,u8Flags);
   strAddr.sin_family = AF_INET;
   strAddr.sin_port = _htons(cifs->mode ? 445 : 139);
-  if(cifs->cSocket == INVALID_SOCKET) {
+  if(cifs->sSocket == INVALID_SOCKET) {
     retVal=-2;
     goto fine;
     }
-  connect(cifs->cSocket, (struct sockaddr*)&strAddr, sizeof(struct sockaddr_in));
+  connect(cifs->sSocket, (struct sockaddr*)&strAddr, sizeof(struct sockaddr_in));
   M2M_INFO("CIFS connect");
 #endif
   tOut=0;
@@ -90,33 +90,33 @@ BOOL CIFSConnect(NETWORKDISK_STRUCT *cifs,const char * s) {
 
   
   *(unsigned long*)internetBuffer=0;
-  internetBufferLen=0;
+  cifs->Flags.Bits.bConnectedD = 1;
   return 1;
   
 fine:
-  close(cifs->cSocket);
-  cifs->cSocket=INVALID_SOCKET;
-  cifs->FTPCFlags.Bits.bConnectedC = 1;
+  close(cifs->sSocket);
+  cifs->sSocket=INVALID_SOCKET;
+  cifs->Flags.Bits.bConnectedD = 0;
   return retVal;
 	}
 
 BOOL CIFSDisconnect(NETWORKDISK_STRUCT *cifs) {
 
-  close(cifs->cSocket);
-  cifs->cSocket=INVALID_SOCKET;
-  cifs->FTPCFlags.Val &= ~0x7f;
+  close(cifs->sSocket);
+  cifs->sSocket=INVALID_SOCKET;
+  cifs->Flags.Val &= ~0x7f;
 	return TRUE;
 	}
 
 int CIFSreadResponseNBSS(NETWORKDISK_STRUCT *cifs,uint8_t *buffer,uint16_t len) {
-	int i,n,retVal=-1;
+	int i,n,retVal=0;
 	uint8_t *p=buffer;
   WORD tOut=0;
 
 	n=0;
-  internetBufferLen=0;
-  memset(internetBuffer,0,sizeof(internetBuffer));
-  recv(cifs->cSocket,internetBuffer,sizeof(internetBuffer),0);
+  rxBufferLen=0;
+  memset(rxBuffer,0,sizeof(rxBuffer));    // forse non serve
+  recv(cifs->sSocket,rxBuffer,sizeof(rxBuffer),0);
 
   do {
 #ifdef USA_ETHERNET
@@ -127,39 +127,25 @@ int CIFSreadResponseNBSS(NETWORKDISK_STRUCT *cifs,uint8_t *buffer,uint16_t len) 
 #endif
     __delay_ms(1);
 #ifdef USA_ETHERNET
-    TCPGetArray(theNetworkDisk.dSocket,p,     64);
+    TCPGetArray(theNetworkDisk.sSocket,p,     64);
 #endif
     if(rxBufferLen) {
     
-//    rxBufferAdjusted=((char*)rxBuffer)+offsetDataRead;
-    
-//    if(theNetworkDisk.FTPCFlags.Bits.debug)
-//      PRINT_RESPONSE(rxBuffer);   //sbagliato, fare solo se nuovo... messo in recv
-      len=min(rxBufferLen,len);
-      memcpy(p,rxBuffer,len);
-      if(rxBufferLen>len)
-        memmove(rxBuffer,rxBuffer+len,rxBufferLen-len);
-      rxBufferLen-=len;
-      if(!rxBufferLen)
-        goto getmore;
-      
-getmore:
-//        theNetworkDisk.FTPCFlags.Bits.bNeedData=TRUE;
-      n=rxBufferLen;   // qua salvo il punto dove ho finito di leggere la volta prima
-      rxBufferLen=0;    // così marco che sto aspettando nuovo pacchetto
-#ifdef USA_WIFI
-      recv(cifs->cSocket,((char*)rxBuffer)+n,sizeof(rxBuffer)-n,0);
-#endif
-			if((n+i) >= 16384) {
+//    if(theNetworkDisk.Flags.Bits.debug)
+//      PRINT_RESPONSE(rxBuffer);   //
+      i=min(rxBufferLen,len   /*-n*/);    // verificare, se serve
+      memcpy(p,rxBuffer,i);
+      p+=i;
+      n+=i;
+
+  		if(n>=len) {
+				retVal=buffer[0] == NBSS_POSITIVE_SESSION_RESPONSE;			//
 				break;
 				}
-			else {
-				n+=i;
-				if(n>=len) {
-					retVal=buffer[0] == NBSS_POSITIVE_SESSION_RESPONSE;			//
-					break;
-					}
-				}
+      rxBufferLen=0;    // così marco che sto aspettando nuovo pacchetto
+#ifdef USA_WIFI
+      recv(cifs->sSocket,rxBuffer,sizeof(rxBuffer),0);
+#endif
 			}
     tOut++;
     } while(tOut<CIFS_TIMEOUT);
@@ -167,18 +153,17 @@ getmore:
 	return retVal;
 	}
 
-int CIFSreadResponseSMB2(NETWORKDISK_STRUCT *cifs,uint8_t *buffer,uint16_t len) {
-	int i,n,retVal=-1;
-  uint16_t lenR;
+int CIFSreadResponseSMB2(NETWORKDISK_STRUCT *cifs,uint8_t *buffer,uint16_t len) { // len NON è la dim pacch atteso ma la dim del buffer passato! v. le varie call
+	int i,n,retVal=0;
+  uint16_t lenR=0;
 	uint8_t *p=buffer;
 	SMB2_HEADER *sh;
-//	SMB2_NEGOTIATE_PROTOCOL *snp;
-  WORD tOut=0;
+  uint16_t tOut=0;
 
 	n=0;
-  internetBufferLen=0;
-  memset(internetBuffer,0,sizeof(internetBuffer));
-  recv(cifs->cSocket,internetBuffer,sizeof(internetBuffer),0);
+  rxBufferLen=0;
+  memset(rxBuffer,0,sizeof(rxBuffer));
+  recv(cifs->sSocket,rxBuffer,sizeof(rxBuffer),0);
 
   do {
 #ifdef USA_ETHERNET
@@ -189,45 +174,31 @@ int CIFSreadResponseSMB2(NETWORKDISK_STRUCT *cifs,uint8_t *buffer,uint16_t len) 
 #endif
     __delay_ms(1);
 #ifdef USA_ETHERNET
-    TCPGetArray(theNetworkDisk.dSocket,p,     64);
+    TCPGetArray(theNetworkDisk.sSocket,p,     64);
 #endif
     if(rxBufferLen) {
     
-//    rxBufferAdjusted=((char*)rxBuffer)+offsetDataRead;
-    
-//    if(theNetworkDisk.FTPCFlags.Bits.debug)
-//      PRINT_RESPONSE(rxBuffer);   //sbagliato, fare solo se nuovo... messo in recv
-      len=min(rxBufferLen,len);
-      memcpy(p,rxBuffer,len);
-      if(rxBufferLen>len)
-        memmove(rxBuffer,rxBuffer+len,rxBufferLen-len);
-      rxBufferLen-=len;
-      if(!rxBufferLen)
-        goto getmore;
-      
-getmore:
-//        theNetworkDisk.FTPCFlags.Bits.bNeedData=TRUE;
-      n=rxBufferLen;   // qua salvo il punto dove ho finito di leggere la volta prima
+//    if(theNetworkDisk.Flags.Bits.debug)
+//      PRINT_RESPONSE(rxBuffer);   //
+      i=min(rxBufferLen,len   /*-n*/);    // verificare, se serve
+      memcpy(p,rxBuffer,i);
+      p+=i;
+      n+=i;
+
+      if(!lenR) {
+        if(n>=4)
+          lenR=MAKELONG(MAKEWORD(buffer[3],buffer[2]),buffer[1]);   // 16 bit qua cmq
+        //buffer[0] è 0 se OK/Response o errore (0x83=Negative Session Response)
+        }
+      if(lenR && n>=lenR+4) {
+        sh=(SMB2_HEADER*)(buffer+4);
+        retVal=sh->Status == STATUS_OK;
+        break;
+        }
       rxBufferLen=0;    // così marco che sto aspettando nuovo pacchetto
 #ifdef USA_WIFI
-      recv(cifs->cSocket,((char*)rxBuffer)+n,sizeof(rxBuffer)-n,0);
+      recv(cifs->sSocket,rxBuffer,sizeof(rxBuffer),0);
 #endif
-			if((n+i) >= 16384) {
-				break;
-				}
-			else {
-				n+=i;
-				if(!lenR) {
-					if(n>=4)
-						lenR=MAKELONG(MAKEWORD(buffer[3],buffer[2]),buffer[1]);
-					//myBuf[0] è 0 se OK/Response o errore (0x83=Negative Session Response)
-					}
-				else if(n>=lenR+4) {
-					sh=(SMB2_HEADER*)&buffer[4];
-					retVal=sh->Status == STATUS_OK;
-					break;
-					}
-				}
 			}
     tOut++;
     } while(tOut<CIFS_TIMEOUT);
@@ -238,17 +209,13 @@ getmore:
 static int CIFSSend(NETWORKDISK_STRUCT *cifs,const uint8_t *buffer,uint16_t len) {
   uint16_t n=len;
   
+  rxBufferLen=0;
+  memset(rxBuffer,0,sizeof(rxBuffer));
 #ifdef USA_ETHERNET
-  TCPPutString(theNetworkDisk.dSocket,buffer);
+  TCPPutString(theNetworkDisk.sSocket,buffer);
 #endif
 #ifdef USA_WIFI
-  do {
-    n=min(1536,n);
-    if(send(cifs->cSocket,buffer,n,0))
-      ;
-    len -= n;
-    buffer+=n;
-    } while(len>0);
+  return sendEx(cifs->sSocket,buffer,n);
 #endif
   return len==0;
   }
@@ -285,14 +252,14 @@ SMB2_HEADER *CIFSprepareSMB2header(NETWORKDISK_STRUCT *cifs,SMB2_HEADER *sh,uint
 	}
 
 
-int CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char * user,const char * pasw) {
-	uint8_t buf[1024],buf2[256];
+int8_t CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char *user,const char *pasw) {
+	uint8_t buf[512];
 	int i,len;
 	NBSS_HEADER nbsh;
 
-	cifs->FTPCFlags.Bits.bConnectedC=CIFSConnect(cifs,s);
+	cifs->Flags.Bits.bConnectedD= CIFSConnect(cifs,s) > 0 ? 1 : 0;
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			SMB1_HEADER sh;
 			sh.Protocol[0]=0xFF;
@@ -325,13 +292,13 @@ int CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char * user,con
 				len=32+1+1+32+1+1;
 				nbsh.Length=MAKEWORD(HIBYTE(len),LOBYTE(len));
 				memcpy(buf,&nbsh,4);
-				memcpy(buf+4,nbEncode("SKYNET",(char*)buf2,TRUE),32+1+1);
-				memcpy(buf+4+32+1+1,nbEncode("FROCIO",(char*)buf2,FALSE),32+1+1);
+				nbEncode("SKYNET",(char*)buf+4,TRUE);
+				nbEncode("FROCIO",(char*)buf+4+32+1+1,FALSE);
 				CIFSSend(cifs,buf,len+4);
 				CIFSreadResponseNBSS(cifs,buf,4);
 				}
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_NEGOTIATE,1,31);
 			snp=(SMB2_NEGOTIATE_PROTOCOL*)(buf+sizeof(SMB2_HEADER)+4);
 			snp->Size.size=0x24;
@@ -356,15 +323,15 @@ int CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char * user,con
 //			memcpy(buf+4,&sh,sh.Size);
 //			memcpy(buf+4+sh.Size,&snp,(snp->Size.size & 0xfffe)+2+2);		// i dialect sono a parte dalla Size...
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,170))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 170
 				goto fatto_errore;
-			snr=(SMB2_NEGOTIATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
+			snr=(SMB2_NEGOTIATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+4);
 					// qua dentro c'è il security Blob!  e in NegotiateContextoffset c'è "LMSS"
 
 			cifs->dialect=snr->Dialect;
 
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_OPENSESSION,1,31);
 			sos=(SMB2_OPEN_SESSION*)(buf+sizeof(SMB2_HEADER)+4);
 			sos->Size.size=0x19;
@@ -420,7 +387,7 @@ int CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char * user,con
 				//https://github.com/nmap/ncrack/blob/master/ntlmssp.cc
 //https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/464551a8-9fc4-428e-b3d3-bc5bfb2e73a5
 				//https://blog.smallsec.ca/ntlm-challenge-response/
-				}
+				}   // security
 			else {
 				sos->BlobOffset=0;
 				sos->BlobLength=0;
@@ -430,8 +397,8 @@ int CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char * user,con
 			len=sh->Size+(sos->Size.size & 0xfffe)+sos->BlobLength;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			i=CIFSreadResponseSMB2(cifs,buf,105 +sizeof(NEG_TOKEN_TARG)+   8);
-			rsh=(SMB2_HEADER*)buf;
+			i=CIFSreadResponseSMB2(cifs,buf,512);    // 105 +sizeof(NEG_TOKEN_TARG)+   8
+			rsh=(SMB2_HEADER*)((char*)buf+4);
 			if(i)
 				goto fatto;
 			if(rsh->Status != STATUS_MORE_PROCESSING_REQUIRED)
@@ -439,7 +406,7 @@ int CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char * user,con
 			if(!cifs->security)		// beh sì :)
 				goto fatto_errore;
 			cifs->sessionid=rsh->SessionID;
-			{NEG_TOKEN_TARG *ntlm=(NEG_TOKEN_TARG*)(buf+sizeof(SMB2_HEADER)+   8);
+			{NEG_TOKEN_TARG *ntlm=(NEG_TOKEN_TARG*)(buf+sizeof(SMB2_HEADER)+   12);
 
 //			SMB2_OPENSESSION_RESPONSE;		// usare
 
@@ -448,7 +415,7 @@ int CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char * user,con
 //			i=*ntlm->challenge;
 			}
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_OPENSESSION,1,1);
 			sos=(SMB2_OPEN_SESSION*)(buf+sizeof(SMB2_HEADER)+4);
 			sos->Size.size=0x19;
@@ -493,7 +460,7 @@ int CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char * user,con
 				ntt.lenUsername=0;
 				ntt.maxlenUsername=0;
 				ntt.ofsUsername=0x00000068;
-				ntt.lenHostname=16;
+				ntt.lenHostname=6*2;     // len (PC_PIC)
 				ntt.maxlenHostname=16;
 				ntt.ofsHostname=0x00000058;		//88
 				ntt.lenSessionkey=16;
@@ -514,9 +481,11 @@ int CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char * user,con
 				ntt.versionBuild=7601;
 				memset(&ntt.versionUnused,0,sizeof(ntt.versionUnused));
 				ntt.versionNTLMrev=NTLMSSP_REVISION_W2K3;
-				memcpy(ntt.MIC,"\xaf\x66\xa8\x5e\xd3\xa9\xbe\xc7\x61\x19\x99\x90\x87\xd5\x01\xc2",16);
+//				memcpy(ntt.MIC,"\xaf\x66\xa8\x5e\xd3\xa9\xbe\xc7\x61\x19\x99\x90\x87\xd5\x01\xc2",16);
+				for(i=0; i<16; i++)
+					ntt.MIC[i]=rand();
 				// da qualche parte dice che è "Machine Identifier" generato casualmente
-				uniEncode("GREGGIOD",ntt.hostname);
+				uniEncode("PC_PIC",ntt.hostname);
 //				uniEncode("GUEST",ntt.username);
 				ntt.lmresponse=cifs->security<2 ? 1 : 0;			// se metto 0 vuole auth key, altrimenti mi dà ok...
 
@@ -540,11 +509,11 @@ ntt.key[0]='0';ntt.key[15]='F';
 			len=sh->Size+(sos->Size.size & 0xfffe)+sos->BlobLength;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,105))		// 85 se non NTLMSSP
+			if(!CIFSreadResponseSMB2(cifs,buf,512))		// 105 o 85 se non NTLMSSP
 				goto fatto_errore;
-			{SMB2_OPENSESSION_RESPONSE *sor=(SMB2_OPENSESSION_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+			{SMB2_OPENSESSION_RESPONSE *sor=(SMB2_OPENSESSION_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
 			sor->Flags;
-			NEG_TOKEN_TARG3 *ntlm=(NEG_TOKEN_TARG3*)(buf+ sor->BlobOffset+  0);
+			NEG_TOKEN_TARG3 *ntlm=(NEG_TOKEN_TARG3*)(buf+ sor->BlobOffset+  4);
 
 			if(cifs->security>1) {
 				i=ntlm->negResult;
@@ -561,21 +530,23 @@ ntt.key[0]='0';ntt.key[15]='F';
 
 
 			}
-		}
+		
 
 fatto:
 	return 1;
+  }
 
 fatto_errore:
-	return 0;
+  CIFSDisconnect(cifs);
+  return 0;
 	}
 
-int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
-	uint8_t buf[1024],buf2[256];
+int8_t CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
+	uint8_t buf[512];
 	int i,len;
 	char *p;
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 
 			}
@@ -594,7 +565,7 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 			if(!s) {			// se NULL sfoglio shares disponibili...
 				//la READ dà errore e credo che la prima DCE fallisca...
 
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_TREECONNECT,1,1);
 				stc=(SMB2_TREE_CONNECT*)(buf+sizeof(SMB2_HEADER)+4);
 				stc->Size.size=0x9;
@@ -608,13 +579,13 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 				len=sh->Size+(stc->Size.size & 0xfffe)+stc->BlobLength;
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,105))
+				if(CIFSreadResponseSMB2(cifs,buf,512))   // 105
 					;		// se ok/completo
-				rsh=(SMB2_HEADER*)buf;
+				rsh=(SMB2_HEADER*)((char*)buf+4);
 				cifs->treeid=rsh->TreeID;
 
 
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
 				scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 				scf->Size.size=0x39;
@@ -641,14 +612,14 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 				len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength;
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,152))
+				if(CIFSreadResponseSMB2(cifs,buf,512))   // 152
 					;		// se ok/completo
-				rsh=(SMB2_HEADER*)buf;
-				{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+				rsh=(SMB2_HEADER*)((char*)buf+4);
+				{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
 				memcpy(fileguid,scr->FileGUID,16);		// FINIRE!
 				}
 
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_GETINFO,1,1);
 				sgi=(SMB2_GETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 				sgi->Size.size=0x29;
@@ -665,12 +636,14 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 				len=sh->Size+(sgi->Size.size & 0xfffe);
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,96))
+				if(CIFSreadResponseSMB2(cifs,buf,512))   // 96
 					;		// se ok/completo
-				rsh=(SMB2_HEADER*)buf;
+				rsh=(SMB2_HEADER*)((char*)buf+4);
+				{SMB2_GETINFO_RESPONSE *sgir=(SMB2_GETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
+        }
 
 
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_WRITE,1,1);		// ossia DCERPC
 				swf=(SMB2_WRITEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 				swf->Size.size=0x31;
@@ -699,18 +672,18 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 				len=sh->Size+(swf->Size.size & 0xfffe)+  160;
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,80))
+				if(CIFSreadResponseSMB2(cifs,buf,512))   // 80
 					;		// se ok/completo
-				rsh=(SMB2_HEADER*)buf;
+				rsh=(SMB2_HEADER*)((char*)buf+4);
 
 
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_READ,1,1);
 				srf=(SMB2_READFILE*)(buf+sizeof(SMB2_HEADER)+4);
 				srf->Size.size=0x31;
 				srf->Padding=0x50;
 				srf->Flags=0;
-				srf->Length=1024;
+				srf->Length=512;
 				srf->Offset=0;
 //				memcpy(srf->FileGUID,"\xf9\x00\x00\x00\x70\x00\x00\x00\xa9\x00\x30\x00\xff\xff\xff\xff",16);
 				memcpy(srf->FileGUID,fileguid,16);
@@ -723,12 +696,12 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 				len=sh->Size+(srf->Size.size & 0xfffe)+srf->BlobLength;
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,196))
+				if(CIFSreadResponseSMB2(cifs,buf,512))   // 196
 					;		// se ok/completo
-				rsh=(SMB2_HEADER*)buf;
+				rsh=(SMB2_HEADER*)((char*)buf+4);
 
 
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_WRITE,1,1);		// ossia NetShareEnumAll
 				swf=(SMB2_WRITEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 				swf->Size.size=0x31;
@@ -752,18 +725,18 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 				len=sh->Size+(swf->Size.size & 0xfffe)+   88;
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,80))
+				if(CIFSreadResponseSMB2(cifs,buf,512))   // 80
 					;		// se ok/completo
-				rsh=(SMB2_HEADER*)buf;
+				rsh=(SMB2_HEADER*)((char*)buf+4);
 
 				
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_READ,1,1);
 				srf=(SMB2_READFILE*)(buf+sizeof(SMB2_HEADER)+4);
 				srf->Size.size=0x31;
 				srf->Padding=0x50;
 				srf->Flags=0;
-				srf->Length=1024;
+				srf->Length=512;
 				srf->Offset=0;
 //				memcpy(srf->FileGUID,"\xf9\x00\x00\x00\x70\x00\x00\x00\xa9\x00\x30\x00\xff\xff\xff\xff",16);
 				memcpy(srf->FileGUID,fileguid,16);
@@ -776,12 +749,12 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 				len=sh->Size+(srf->Size.size & 0xfffe)+srf->BlobLength;
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,196))
+				if(CIFSreadResponseSMB2(cifs,buf,512))   // 196
 					;		// se ok/completo
-				rsh=(SMB2_HEADER*)buf;
+				rsh=(SMB2_HEADER*)((char*)buf+4);
 
 
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_CLOSE,1,1);
 				sclf=(SMB2_CLOSEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 				sclf->Size.size=0x18;
@@ -792,12 +765,12 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 				len=sh->Size+(sclf->Size.size & 0xfffe);
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,196))
+				if(CIFSreadResponseSMB2(cifs,buf,512))   // 120
 					;		// se ok/completo
-				rsh=(SMB2_HEADER*)buf;
+				rsh=(SMB2_HEADER*)((char*)buf+4);
 
 
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_IOCTL,1,1);
 				si=(SMB2_IOCTL*)(buf+sizeof(SMB2_HEADER)+4);
 				si->Size.size=0x39;
@@ -821,15 +794,15 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 				len=sh->Size+(si->Size.size & 0xfffe)+si->BlobInLength+si->BlobOutLength;
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,54))
+				if(CIFSreadResponseSMB2(cifs,buf,512))   // 54
 					;		// se ok/completo
-				rsh=(SMB2_HEADER*)buf;
+				rsh=(SMB2_HEADER*)((char*)buf+4);
 
 				memset(cifs->fileguid,0,16);
 				memset(cifs->dirguid,0,16);
-				}
+				}   // if(s)
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_TREECONNECT,1,1);
 			stc=(SMB2_TREE_CONNECT*)(buf+sizeof(SMB2_HEADER)+4);
 			stc->Size.size=0x9;
@@ -841,10 +814,11 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 			len=sh->Size+(stc->Size.size & 0xfffe)+stc->BlobLength;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(CIFSreadResponseSMB2(cifs,buf,105))
-				;		// se ok/completo
-			rsh=(SMB2_HEADER*)buf;
-			cifs->treeid=rsh->TreeID;
+			if(CIFSreadResponseSMB2(cifs,buf,512)) {  // 105
+  			rsh=(SMB2_HEADER*)((char*)buf+4);
+    		cifs->treeid=rsh->TreeID;
+        return 1;
+        }
 
 			}
 
@@ -853,12 +827,12 @@ int CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 	return 0;
 	}
 
-int CIFSFindFirst(NETWORKDISK_STRUCT *cifs,const char *s,uint8_t attr) {
-	uint8_t buf[2048],buf2[256];
+int8_t CIFSFindFirst(NETWORKDISK_STRUCT *cifs,const char *s,uint8_t attr,void *dirbuf) {
+	uint8_t buf[4096];
 	int i,len;
 	char *p;
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 
 			}
@@ -874,7 +848,7 @@ int CIFSFindFirst(NETWORKDISK_STRUCT *cifs,const char *s,uint8_t attr) {
 			SMB2_FIND *sf;
 			uint8_t guid[16];
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
@@ -905,16 +879,14 @@ int CIFSFindFirst(NETWORKDISK_STRUCT *cifs,const char *s,uint8_t attr) {
 			len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength    +8;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,152))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 152
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
 			memcpy(guid,scr->FileGUID,16);		// FINIRE!
 			}
 
-
-
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_FIND,1,1);
 			sf=(SMB2_FIND*)(buf+sizeof(SMB2_HEADER)+4);
 			sf->Size.size=0x21;
@@ -922,23 +894,52 @@ int CIFSFindFirst(NETWORKDISK_STRUCT *cifs,const char *s,uint8_t attr) {
 			sf->FindFlags=0;
 			sf->FileIndex=0;
 			memcpy(sf->FileGUID,guid,16);
-			sf->OutputBufferLength=65536;
+			sf->OutputBufferLength=4000; // 65536
 			sf->BlobOffset=0x00000060;
 			sf->BlobLength=2;		// Unicode;
-			uniEncode("*",sf->Blob);
+			uniEncode("*",sf->Blob);    // mettere search nome?
 
 			len=sh->Size+(sf->Size.size & 0xfffe)+sf->BlobLength;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,1000))
+			if(!CIFSreadResponseSMB2(cifs,buf,4000))
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_FIND_RESPONSE *sfr=(SMB2_FIND_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
-
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_FIND_RESPONSE *sfr=(SMB2_FIND_RESPONSE*)((char*)buf+sizeof(SMB2_HEADER)+   12);
+			SMB2_FIND_RESPONSE_INFO *sfri=(SMB2_FIND_RESPONSE_INFO*)((char*)buf+sizeof(SMB2_HEADER)+   12);
+      i=0;
+			do {			// il "." c'è sempre, anche se la Dir è vuota
+        SearchRec *sr=(SearchRec*)(((char*)dirbuf)+i*SEARCHREC_VARIABLE_SIZE);
+        FILETIMEPACKED ft;
+        memset(sr->filename,0,FILE_NAME_SIZE_8P3+2);    // si potrebbe togliere...
+//				if(sfri->NextOffset) {
+					if(sfri->ShortNameLength) {
+            uniDecode(sfri->ShortFileName,sfri->ShortNameLength,sr->filename);
+						}
+					else {
+#ifdef SUPPORT_LFN
+#endif            
+            uniDecode(sfri->FileName,sfri->FilenameLength,sr->filename);
+						}
+          strupr(sr->filename);   // 
+          sr->attributes=sfri->Attrib & 0xff;
+          ft=FiletimeToPackedTime(sfri->WriteTime /*ModifiedTime no| questo pare sempre aggiornato ad ora, gli altri 2 insomma...*/);
+          sr->timestamp=ft;
+          sr->filesize=sfri->EOFSize;
+          sr->entry=i;  
+          i++;
+//          }
+        if(!sfri->NextOffset)
+          break;
+        sfri=(SMB2_FIND_RESPONSE_INFO*)(((char*)sfri)+sfri->NextOffset);
+        if((((uint8_t*)sfri)-buf)>=4000)		// patch per buffer piccolo!
+          break;
+        } while(i<((MEDIA_SECTOR_SIZE*2/*v. MEDIA_INFORMATION, sfora in DISK a seguire*/)/
+            SEARCHREC_VARIABLE_SIZE)-1 /* circa 40, devo lasciare spazio per una vuota completa per marker*/);
 			}
 
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CLOSE,1,1);
 			sclf=(SMB2_CLOSEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			sclf->Size.size=0x18;
@@ -948,9 +949,9 @@ int CIFSFindFirst(NETWORKDISK_STRUCT *cifs,const char *s,uint8_t attr) {
 			len=sh->Size+(sclf->Size.size & 0xfffe);
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,196))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 120
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
+			rsh=(SMB2_HEADER*)((char*)buf+4);
 
 			return 1;
 			}
@@ -960,24 +961,24 @@ errore:
 	return 0;
 	}
 
-int CIFSFindNext(NETWORKDISK_STRUCT *cifs) {
+int8_t CIFSFindNext(NETWORKDISK_STRUCT *cifs) {
 	SMB2_FIND_RESPONSE_INFO *sfri;
 
 	return 0;
 	}
 
-int CIFSCloseShare(NETWORKDISK_STRUCT *cifs) {
-	uint8_t buf[1024],buf2[256];
+int8_t CIFSCloseShare(NETWORKDISK_STRUCT *cifs) {
+	uint8_t buf[512];
 	int i,len;
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
 			SMB2_HEADER *sh,*rsh;
 			SMB2_TREE_DISCONNECT *std;
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_TREEDISCONNECT,1,1);
 			std=(SMB2_TREE_DISCONNECT*)(buf+sizeof(SMB2_HEADER)+4);
 			std->Size.size=0x4;
@@ -985,9 +986,9 @@ int CIFSCloseShare(NETWORKDISK_STRUCT *cifs) {
 			len=4+sh->Size+(std->Size.size & 0xfffe);
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(CIFSreadResponseSMB2(cifs,buf,68))
+			if(CIFSreadResponseSMB2(cifs,buf,512))   // 68
 				;
-			rsh=(SMB2_HEADER*)buf;
+			rsh=(SMB2_HEADER*)((char*)buf+4);
 
 //			SMB2_TREEDISCONNECT_RESPONSE;
 			}
@@ -997,16 +998,16 @@ int CIFSCloseShare(NETWORKDISK_STRUCT *cifs) {
 	return 0;
 	}
 
-int CIFSChDir(NETWORKDISK_STRUCT *cifs,const char *s) {
-	uint8_t buf[1024],buf2[256];
+int8_t CIFSChDir(NETWORKDISK_STRUCT *cifs,const char *s) {
+	uint8_t buf[512];
 	int i,len;
 	char *p;
 
 
-//	no! usare dirguid, passare handle alla dir aperta quando si fanno le operazioni sui file
-//		ergo qua salvare in dirguid la dir corrente
+//	usare dirguid, passare handle alla dir aperta quando si fanno le operazioni sui file
+//	gestire \ root e path ...
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 
 			}
@@ -1015,10 +1016,9 @@ int CIFSChDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 			SMB2_TREE_CONNECT *stc;
 			SMB2_CREATEFILE *scf;
 			SMB2_CLOSEFILE *sclf;
-			uint8_t fileguid[16];
 
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
@@ -1030,7 +1030,7 @@ int CIFSChDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 			scf->Attributes=0;
 			scf->ShareAccess=SMB2_FILE_SHARE_READ | SMB2_FILE_SHARE_WRITE | SMB2_FILE_SHARE_DELETE;			//
 			scf->Disposition=SMB2_FILE_OPEN;
-			scf->CreateOptions=SMB2_OPTION_SYNCIONO;		// 0x00000020		// SyncIO non-alert
+			scf->CreateOptions=SMB2_OPTION_DIRECTORY | SMB2_OPTION_SYNCIONO;		// 0x00000020		// SyncIO non-alert
 			scf->BlobFilenameOffset=0x00000078;
 			scf->BlobFilenameLength=0;
 			scf->BlobOffset=0x00000080;
@@ -1049,16 +1049,16 @@ int CIFSChDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 			len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength    +8;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(CIFSreadResponseSMB2(cifs,buf,152))
-				;		// se ok/completo
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			if(!CIFSreadResponseSMB2(cifs,buf,512))   // 152
+				goto errore;
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
 			memcpy(cifs->dirguid,scr->FileGUID,16);		// FINIRE!
 			}
 
 
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CLOSE,1,1);
 			sclf=(SMB2_CLOSEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			sclf->Size.size=0x18;
@@ -1068,27 +1068,30 @@ int CIFSChDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 			len=sh->Size+(sclf->Size.size & 0xfffe);
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(CIFSreadResponseSMB2(cifs,buf,196))
+			if(CIFSreadResponseSMB2(cifs,buf,512))   // 120
 				;		// se ok/completo
-			rsh=(SMB2_HEADER*)buf;
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+      
+      return 1;
 
 			}
 		}
-
+  
+errore:
 	return 0;
 	}
 
-int CIFSMkDir(NETWORKDISK_STRUCT *cifs,const char *s) {
-	uint8_t buf[1024];
+int8_t CIFSMkDir(NETWORKDISK_STRUCT *cifs,const char *s) {
+	uint8_t buf[512];
 	int i,len;
 	SMB2_HEADER *sh,*rsh;
 	SMB2_CREATEFILE *scf;
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
@@ -1112,10 +1115,10 @@ int CIFSMkDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 			len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(CIFSreadResponseSMB2(cifs,buf,152)) {
+			if(CIFSreadResponseSMB2(cifs,buf,512)) {   // 152
 				
-				rsh=(SMB2_HEADER*)buf;
-				{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+				rsh=(SMB2_HEADER*)((char*)buf+4);
+				{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
 //				memcpy(fileguid,scr->FileGUID,16);		// FINIRE!
 				}
 				return 1;
@@ -1127,8 +1130,8 @@ int CIFSMkDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 	return 0;
 	}
 
-int CIFSRmDir(NETWORKDISK_STRUCT *cifs,const char *s) {
-	uint8_t buf[1024];
+int8_t CIFSRmDir(NETWORKDISK_STRUCT *cifs,const char *s) {
+	uint8_t buf[512];
 	int i,len;
 	SMB2_HEADER *sh,*rsh;
 	SMB2_CREATEFILE *scf;
@@ -1136,11 +1139,11 @@ int CIFSRmDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 	SMB2_CLOSEFILE *sclf;
 	uint8_t guid[16];
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
@@ -1162,14 +1165,14 @@ int CIFSRmDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 			len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,152))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 152
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
 			memcpy(guid,scr->FileGUID,16);		// 
 			}
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
 			si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 			si->Size.size=0x21;
@@ -1185,14 +1188,14 @@ int CIFSRmDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 			len=sh->Size+(si->Size.size & 0xfffe)+si->InfoSize;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,196))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 196
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_SETINFO_RESPONSE *ssr=(SMB2_SETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_SETINFO_RESPONSE *ssr=(SMB2_SETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
 
 			}
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CLOSE,1,1);
 			sclf=(SMB2_CLOSEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			sclf->Size.size=0x18;
@@ -1202,10 +1205,10 @@ int CIFSRmDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 			len=sh->Size+(sclf->Size.size & 0xfffe);
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,196))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 120
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CLOSE_RESPONSE *scr=(SMB2_CLOSE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CLOSE_RESPONSE *scr=(SMB2_CLOSE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
 
 			}
 
@@ -1217,19 +1220,19 @@ errore:
 	return 0;
 	}
 
-int CIFSOpenFile(NETWORKDISK_STRUCT *cifs,const char * s,uint8_t mode,uint8_t share) {
-	uint8_t buf[1024];
+int8_t CIFSOpenFile(NETWORKDISK_STRUCT *cifs,const char * s,uint8_t mode,uint8_t share) {
+	uint8_t buf[512];
 	int i,len;
 	SMB2_HEADER *sh,*rsh;
 	SMB2_CREATEFILE *scf;
 
 	cifs->fileoffset=0;
-
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+  share >> 2;     // i 2 bit più bassi sono type binary o text
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,320);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
@@ -1279,10 +1282,10 @@ int CIFSOpenFile(NETWORKDISK_STRUCT *cifs,const char * s,uint8_t mode,uint8_t sh
 			len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength   +8;		// 4 se Blob esteso.. verificare
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,152))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 152
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
 			if(rsh->Status==STATUS_OK) {
 				memcpy(cifs->fileguid,scr->FileGUID,16);		// FINIRE!
 
@@ -1299,21 +1302,21 @@ errore:
 	return 0;
 	}
 
-int CIFSReadFile(NETWORKDISK_STRUCT *cifs,uint8_t *data,uint32_t size) {
-	uint8_t buf[4096];
+int8_t CIFSReadFile(NETWORKDISK_STRUCT *cifs,uint8_t *data,uint32_t size) {
+	uint8_t buf[4096]; uint32_t totread=0;
 	int i,len;
 	SMB2_HEADER *sh,*rsh;
 	SMB2_READFILE *srf;
 	SMB2_READ_RESPONSE *srr;
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
 			do {
 				i=min(size,4096);
 
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_READ,1,320);
 				srf=(SMB2_READFILE*)(buf+sizeof(SMB2_HEADER)+4);
 				srf->Size.size=0x31;
@@ -1331,17 +1334,19 @@ int CIFSReadFile(NETWORKDISK_STRUCT *cifs,uint8_t *data,uint32_t size) {
 				len=sh->Size+(srf->Size.size & 0xfffe)+srf->BlobLength  +1;
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(!CIFSreadResponseSMB2(cifs,buf,64+16+i))
+				if(!CIFSreadResponseSMB2(cifs,buf,4096))    // 64+16+i
 					goto errore;		// se ok/completo
-				rsh=(SMB2_HEADER*)buf;
-				srr=(SMB2_READ_RESPONSE*)(buf+sizeof(SMB2_HEADER));
+				rsh=(SMB2_HEADER*)((char*)buf+4);
+				srr=(SMB2_READ_RESPONSE*)(buf+sizeof(SMB2_HEADER)+4);
 
 				memcpy(data,srr->Blob,i);
 
 				size-=i;
 				data+=i;
+        totread+=i;
 				} while(size>0);
-
+      cifs->fileoffset+=totread;
+      return totread;
 			}
 		}
 
@@ -1349,7 +1354,7 @@ errore:
 	return 0;
 	}
 
-int CIFSWriteFile(NETWORKDISK_STRUCT *cifs,const uint8_t *data,uint32_t size) {
+int8_t CIFSWriteFile(NETWORKDISK_STRUCT *cifs,const uint8_t *data,uint32_t size) {
 	uint8_t buf[4096];
 	int i,len;
 	SMB2_HEADER *sh,*rsh;
@@ -1357,11 +1362,11 @@ int CIFSWriteFile(NETWORKDISK_STRUCT *cifs,const uint8_t *data,uint32_t size) {
 	SMB2_WRITE_RESPONSE *swr;
 	SMB2_SETINFO *si;
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
 			// bah questo non penso che serva davvero, allora credo solo lo spazio
 			si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
@@ -1378,14 +1383,14 @@ int CIFSWriteFile(NETWORKDISK_STRUCT *cifs,const uint8_t *data,uint32_t size) {
 			len=sh->Size+(si->Size.size & 0xfffe)+si->InfoSize;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,196))
+			if(!CIFSreadResponseSMB2(cifs,buf,4096))      // 196
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_SETINFO_RESPONSE *ssr=(SMB2_SETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_SETINFO_RESPONSE *ssr=(SMB2_SETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
 
 			}
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
       CIFSprepareSMB2header(cifs,sh,SMB2_COM_WRITE,1,1);		// ossia NetShareEnumAll
 			swf=(SMB2_WRITEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			swf->Size.size=0x31;
@@ -1402,7 +1407,7 @@ int CIFSWriteFile(NETWORKDISK_STRUCT *cifs,const uint8_t *data,uint32_t size) {
 			cifs->fileoffset+=size;
 
 
-//			i=min(1024,size);
+//			i=min(512,size);
 			memcpy(&swf->Blob[-4],data,size);
 //			data+=i;
 //			size-=i;
@@ -1410,18 +1415,18 @@ int CIFSWriteFile(NETWORKDISK_STRUCT *cifs,const uint8_t *data,uint32_t size) {
 			len=sh->Size+(swf->Size.size & 0xfffe)+size;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(CIFSreadResponseSMB2(cifs,buf,80))
+			if(CIFSreadResponseSMB2(cifs,buf,4096))   // 80
 				;		// se ok/completo
-			rsh=(SMB2_HEADER*)buf;
-			swr=(SMB2_WRITE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			swr=(SMB2_WRITE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
 
 			// COME SI FA se > 65535?!
 	/*		if(size) do {
-				i=min(1024,size);
+				i=min(512,size);
 				Send(data,i);
 				data+=i;
 				size-=i;
-				} while(size>0);*/
+				} while(size>0);*/   return size;
 			}
 		}
 
@@ -1429,18 +1434,18 @@ errore:
 	return 0;
 	}
 
-int CIFSCloseFile(NETWORKDISK_STRUCT *cifs) {
-	uint8_t buf[1024];
+int8_t CIFSCloseFile(NETWORKDISK_STRUCT *cifs) {
+	uint8_t buf[512];
 	int i,len;
 	SMB2_HEADER *sh,*rsh;
 	SMB2_CLOSEFILE *sclf;
 	SMB2_CLOSE_RESPONSE *scr;
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CLOSE,1,1);
 			sclf=(SMB2_CLOSEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			sclf->Size.size=0x18;
@@ -1450,20 +1455,20 @@ int CIFSCloseFile(NETWORKDISK_STRUCT *cifs) {
 			len=sh->Size+(sclf->Size.size & 0xfffe);
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(CIFSreadResponseSMB2(cifs,buf,196))
+			if(CIFSreadResponseSMB2(cifs,buf,512))     // 120
 				;		// se ok/completo
-			rsh=(SMB2_HEADER*)buf;
-			scr=(SMB2_CLOSE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			scr=(SMB2_CLOSE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
 
-			memset(cifs->fileguid,0,16);
+			memset(cifs->fileguid,0,16);  return 1;
 			}
 		}
 
 	return 0;
 	}
 
-int CIFSDeleteFile(NETWORKDISK_STRUCT *cifs,const char *s) {
-	uint8_t buf[1024];
+int8_t CIFSDeleteFile(NETWORKDISK_STRUCT *cifs,const char *s) {
+	uint8_t buf[512];
 	int i,len;
 	SMB2_HEADER *sh,*rsh;
 	SMB2_CREATEFILE *scf;
@@ -1471,11 +1476,11 @@ int CIFSDeleteFile(NETWORKDISK_STRUCT *cifs,const char *s) {
 	SMB2_CLOSEFILE *sclf;
 	uint8_t guid[16];
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
@@ -1497,14 +1502,14 @@ int CIFSDeleteFile(NETWORKDISK_STRUCT *cifs,const char *s) {
 			len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,152))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 152
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
 			memcpy(guid,scr->FileGUID,16);		// 
 			}
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
 			si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 			si->Size.size=0x21;
@@ -1520,14 +1525,14 @@ int CIFSDeleteFile(NETWORKDISK_STRUCT *cifs,const char *s) {
 			len=sh->Size+(si->Size.size & 0xfffe)+si->InfoSize;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,196))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 196
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_SETINFO_RESPONSE *ssr=(SMB2_SETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_SETINFO_RESPONSE *ssr=(SMB2_SETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
 
 			}
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CLOSE,1,1);
 			sclf=(SMB2_CLOSEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			sclf->Size.size=0x18;
@@ -1537,11 +1542,10 @@ int CIFSDeleteFile(NETWORKDISK_STRUCT *cifs,const char *s) {
 			len=sh->Size+(sclf->Size.size & 0xfffe);
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,196))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 120
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CLOSE_RESPONSE *scr=(SMB2_CLOSE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
-
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CLOSE_RESPONSE *scr=(SMB2_CLOSE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
 			}
 
 			return 1;
@@ -1553,8 +1557,8 @@ errore:
 	return 0;
 	}
 
-int CIFSRenameFile(NETWORKDISK_STRUCT *cifs,const char * s,const char * d) {
-	uint8_t buf[1024];
+int8_t CIFSRenameFile(NETWORKDISK_STRUCT *cifs,const char * s,const char * d) {
+	uint8_t buf[512];
 	int i,len;
 	SMB2_HEADER *sh,*rsh;
 	SMB2_CREATEFILE *scf;
@@ -1563,11 +1567,11 @@ int CIFSRenameFile(NETWORKDISK_STRUCT *cifs,const char * s,const char * d) {
 	uint8_t guid[16];
 
 	//non si capisce... fa delle Create ma boh idem... anche per le Dir
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
@@ -1589,14 +1593,14 @@ int CIFSRenameFile(NETWORKDISK_STRUCT *cifs,const char * s,const char * d) {
 			len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,152))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 152
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
 			memcpy(guid,scr->FileGUID,16);		// 
 			}
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
 			si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 			si->Size.size=0x21;
@@ -1619,14 +1623,14 @@ int CIFSRenameFile(NETWORKDISK_STRUCT *cifs,const char * s,const char * d) {
 			len=sh->Size+(si->Size.size & 0xfffe)+si->InfoSize;
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,196))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 196
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_SETINFO_RESPONSE *ssr=(SMB2_SETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_SETINFO_RESPONSE *ssr=(SMB2_SETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
 
 			}
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CLOSE,1,1);
 			sclf=(SMB2_CLOSEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			sclf->Size.size=0x18;
@@ -1636,10 +1640,10 @@ int CIFSRenameFile(NETWORKDISK_STRUCT *cifs,const char * s,const char * d) {
 			len=sh->Size+(sclf->Size.size & 0xfffe);
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(!CIFSreadResponseSMB2(cifs,buf,196))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 120
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CLOSE_RESPONSE *scr=(SMB2_CLOSE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CLOSE_RESPONSE *scr=(SMB2_CLOSE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
 
 			}
 
@@ -1652,8 +1656,8 @@ errore:
 	return 0;
 	}
 
-int CIFSFileStat(NETWORKDISK_STRUCT *cifs,const char *s, struct FSstat *statbuf) {
-	uint8_t buf[1024];
+int8_t CIFSFileStat(NETWORKDISK_STRUCT *cifs,const char *s, struct FSstat *statbuf) {
+	uint8_t buf[512];
 	int i,len;
 	SMB2_HEADER *sh,*rsh;
 	SMB2_GETINFO *sgi;
@@ -1662,13 +1666,13 @@ int CIFSFileStat(NETWORKDISK_STRUCT *cifs,const char *s, struct FSstat *statbuf)
 	uint8_t guid[16];
 
 	//non si capisce... fa delle Create ma boh
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		memset(statbuf,0,sizeof(struct FSstat));
 		if(cifs->version==1) {
 			}
 		else {
 			if(s) {
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
 				scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 				scf->Size.size=0x39;
@@ -1695,13 +1699,17 @@ int CIFSFileStat(NETWORKDISK_STRUCT *cifs,const char *s, struct FSstat *statbuf)
 				len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength;
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,152)) {
-					rsh=(SMB2_HEADER*)buf;
-					{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+				if(CIFSreadResponseSMB2(cifs,buf,512)) {   // 152
+					rsh=(SMB2_HEADER*)((char*)buf+4);
+					{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
+          FILETIMEPACKED ft;
 					statbuf->st_size=scr->EOFSize;
-					statbuf->st_atime=FiletimeToTime(scr->AccessTime);
-					statbuf->st_ctime=FiletimeToTime(scr->WriteTime);
-					statbuf->st_mtime=FiletimeToTime(scr->ModifiedTime);
+          ft=FiletimeToPackedTime(scr->AccessTime);
+					statbuf->st_atime=ft.v;
+          ft=FiletimeToPackedTime(scr->WriteTime);
+					statbuf->st_ctime=ft.v;
+          ft=FiletimeToPackedTime(scr->ModifiedTime);
+					statbuf->st_mtime=ft.v;
 					statbuf->st_mode=scr->Attrib;			// verificare...
 					}
 					return 1;
@@ -1710,7 +1718,7 @@ int CIFSFileStat(NETWORKDISK_STRUCT *cifs,const char *s, struct FSstat *statbuf)
 			else {
 				memcpy(guid,cifs->fileguid,16);
 
-				sh=(SMB2_HEADER*)(buf+4);
+				sh=(SMB2_HEADER*)((char*)buf+4);
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_GETINFO,1,1);
 				sgi=(SMB2_GETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 				sgi->Size.size=0x29;
@@ -1726,13 +1734,13 @@ int CIFSFileStat(NETWORKDISK_STRUCT *cifs,const char *s, struct FSstat *statbuf)
 				len=sh->Size+(sgi->Size.size & 0xfffe);
 				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 				CIFSSend(cifs,buf,len+4);
-				if(CIFSreadResponseSMB2(cifs,buf,96)) {
-					rsh=(SMB2_HEADER*)buf;
-					{SMB2_GETINFO_RESPONSE *sgir=(SMB2_GETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+				if(CIFSreadResponseSMB2(cifs,buf,512)) {   // 96
+					rsh=(SMB2_HEADER*)((char*)buf+4);
+					{SMB2_GETINFO_RESPONSE *sgir=(SMB2_GETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
 //					statbuf->st_size=sgir->EOFSize;
-//					statbuf->st_atime=*(uint32_t*)&FiletimeToTime(scr->AccessTime);
-//					statbuf->st_ctime=*(uint32_t*)&FiletimeToTime(scr->WriteTime);
-//					statbuf->st_mtime=*(uint32_t*)&FiletimeToTime(scr->ModifiedTime);
+//					statbuf->st_atime=*(uint32_t*)&FiletimeToPackedTime(scr->AccessTime);
+//					statbuf->st_ctime=*(uint32_t*)&FiletimeToPackedTime(scr->WriteTime);
+//					statbuf->st_mtime=*(uint32_t*)&FiletimeToPackedTime(scr->ModifiedTime);
 //					statbuf->st_mode=scr->Attrib;			// verificare...
 					}
 					return 1;
@@ -1745,19 +1753,205 @@ errore:
 	return 0;
 	}
 
+int8_t CIFSSetFileTime(NETWORKDISK_STRUCT *cifs,const char *s, uint32_t t) {
+	uint8_t buf[512];
+	int i,len;
+	SMB2_HEADER *sh,*rsh;
+	SMB2_SETINFO *si;
+	SMB2_CREATEFILE *scf;
+	uint8_t guid[16];
+  extern volatile unsigned long now;
 
-int CIFSCloseSession(NETWORKDISK_STRUCT *cifs) {
-	uint8_t buf[1024],buf2[256];
+	if(cifs->Flags.Bits.bConnectedD) {
+		if(cifs->version==1) {
+			}
+		else {
+			if(!t) 
+        t=now;
+      sh=(SMB2_HEADER*)((char*)buf+4);
+      CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
+      scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
+      scf->Size.size=0x39;
+      scf->Oplock=SMB2_OPLOCK_LEVEL_NONE;
+      scf->Impersonation=2;
+      scf->Flags=0;
+      scf->Reserved=0;
+      scf->AccessMask=SMB2_ACCESS_SYNCHRONIZE | SMB2_ACCESS_READCONTROL | SMB2_ACCESS_WRITEATTRIBUTES | 
+        SMB2_ACCESS_READATTRIBUTES | SMB2_ACCESS_WRITEEA | SMB2_ACCESS_READEA | SMB2_ACCESS_APPEND | 
+        SMB2_ACCESS_WRITE | SMB2_ACCESS_READ;	//0x0012019f
+      scf->Attributes=0;
+      scf->ShareAccess=SMB2_FILE_SHARE_READ | SMB2_FILE_SHARE_WRITE | SMB2_FILE_SHARE_DELETE;			//
+      scf->Disposition=SMB2_FILE_OPEN;
+      scf->CreateOptions=SMB2_OPTION_NORECALL | SMB2_OPTION_NONDIRECTORY;		// 0x00400040
+      scf->BlobFilenameOffset=0x78;
+      scf->BlobFilenameLength=12;
+      scf->BlobOffset=0;
+      scf->BlobLength=0;
+      {
+      scf->BlobFilenameLength /*BlobLength*/=strlen(s)*2;		// Unicode;
+      uniEncode(s,&scf->Blob[-8]);
+      }
+
+      len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength;
+      CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+      CIFSSend(cifs,buf,len+4);
+      if(CIFSreadResponseSMB2(cifs,buf,512)) {   // 152
+        rsh=(SMB2_HEADER*)((char*)buf+4);
+        {SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
+        
+        sh=(SMB2_HEADER*)((char*)buf+4);
+        CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
+        si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
+        si->Size.size=0x21;
+        si->Class=1;
+        si->InfoLevel=SMB2_FILE_BASIC_INFO;
+        si->InfoSize=sizeof(SMB2_FILEBASICINFO) /*0x40*/;
+        si->InfoOffset=0x0060;
+        si->Reserved=0;
+        si->AdditionalInfo=0;
+        memcpy(si->FileGUID,guid,16);
+        {SMB2_FILEBASICINFO *sfbi=(SMB2_FILEBASICINFO*)((char*)si+si->InfoOffset);
+        memset(sfbi,0,sizeof(SMB2_FILEBASICINFO));
+        sfbi->WriteTime=TimeToFiletime(t);
+        }
+
+        len=sh->Size+(si->Size.size & 0xfffe)+si->InfoSize;
+        CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+        CIFSSend(cifs,buf,len+4);
+        if(!CIFSreadResponseSMB2(cifs,buf,512))    // 196
+          goto errore;
+        rsh=(SMB2_HEADER*)((char*)buf+4);
+        {SMB2_SETINFO_RESPONSE *ssr=(SMB2_SETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
+
+        }
+        
+        }
+        return 1;
+        }
+			}
+		}
+
+errore:
+	return 0;
+	}
+
+int8_t CIFSAttrib(NETWORKDISK_STRUCT *cifs,const char *s,uint8_t attrAnd,uint8_t attrOr) {
+	uint8_t buf[512];
+	int i,len;
+	SMB2_HEADER *sh,*rsh;
+	SMB2_GETINFO *sgi;
+	SMB2_SETINFO *si;
+	SMB2_CREATEFILE *scf;
+	uint8_t guid[16];
+  extern volatile unsigned long now;
+
+	if(cifs->Flags.Bits.bConnectedD) {
+		if(cifs->version==1) {
+			}
+		else {
+      sh=(SMB2_HEADER*)((char*)buf+4);
+      CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
+      scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
+      scf->Size.size=0x39;
+      scf->Oplock=SMB2_OPLOCK_LEVEL_NONE;
+      scf->Impersonation=2;
+      scf->Flags=0;
+      scf->Reserved=0;
+      scf->AccessMask=SMB2_ACCESS_SYNCHRONIZE | SMB2_ACCESS_READCONTROL | SMB2_ACCESS_WRITEATTRIBUTES | 
+        SMB2_ACCESS_READATTRIBUTES | SMB2_ACCESS_WRITEEA | SMB2_ACCESS_READEA | SMB2_ACCESS_APPEND | 
+        SMB2_ACCESS_WRITE | SMB2_ACCESS_READ;	//0x0012019f
+      scf->Attributes=0;
+      scf->ShareAccess=SMB2_FILE_SHARE_READ | SMB2_FILE_SHARE_WRITE | SMB2_FILE_SHARE_DELETE;			//
+      scf->Disposition=SMB2_FILE_OPEN;
+      scf->CreateOptions=SMB2_OPTION_NORECALL | SMB2_OPTION_NONDIRECTORY;		// 0x00400040
+      scf->BlobFilenameOffset=0x78;
+      scf->BlobFilenameLength=12;
+      scf->BlobOffset=0;
+      scf->BlobLength=0;
+      {
+      scf->BlobFilenameLength /*BlobLength*/=strlen(s)*2;		// Unicode;
+      uniEncode(s,&scf->Blob[-8]);
+      }
+// VERIFICARE!
+      len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength;
+      CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+      CIFSSend(cifs,buf,len+4);
+      if(CIFSreadResponseSMB2(cifs,buf,512)) {   // 152
+        SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
+        rsh=(SMB2_HEADER*)((char*)buf+4);
+        
+				sh=(SMB2_HEADER*)((char*)buf+4);
+				CIFSprepareSMB2header(cifs,sh,SMB2_COM_GETINFO,1,1);
+				sgi=(SMB2_GETINFO*)(buf+sizeof(SMB2_HEADER)+4);
+				sgi->Size.size=0x29;
+				sgi->Class=SMB2_FS_FILE_INFO;
+        si->InfoSize=sizeof(SMB2_FILEBASICINFO) /*0x40*/;
+				sgi->MaxSize=24;
+				sgi->InputOffset=0x68;
+				sgi->Reserved=0;
+				sgi->InputSize=0;
+				sgi->AdditionalInfo=0;
+				sgi->Flags=0;
+				memcpy(sgi->FileGUID,guid,16);
+				len=sh->Size+(sgi->Size.size & 0xfffe);
+				CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+				CIFSSend(cifs,buf,len+4);
+				if(CIFSreadResponseSMB2(cifs,buf,1024)) {		// 96
+					rsh=(SMB2_HEADER*)((char*)buf+4);
+					{SMB2_GETINFO_RESPONSE *sgir=(SMB2_GETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
+		      SMB2_FILEBASICINFO *sfbi=(SMB2_FILEBASICINFO*)((char*)sgir+sgir->BlobOffset);
+					i=sfbi->Attrib;
+					}
+
+					sh=(SMB2_HEADER*)((char*)buf+4);
+					CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
+					si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
+					si->Size.size=0x21;
+					si->Class=1;
+					si->InfoLevel=SMB2_FILE_BASIC_INFO;
+					si->InfoSize=sizeof(SMB2_FILEBASICINFO) /*0x40*/;
+					si->InfoOffset=0x0060;
+					si->Reserved=0;
+					si->AdditionalInfo=0;
+					memcpy(si->FileGUID,guid,16);
+					{SMB2_FILEBASICINFO *sfbi=(SMB2_FILEBASICINFO*)((char*)si+si->InfoOffset);
+					memset(sfbi,0,sizeof(SMB2_FILEBASICINFO));
+					sfbi->Attrib=(i & attrAnd) | attrOr;
+					}
+
+					len=sh->Size+(si->Size.size & 0xfffe)+si->InfoSize;
+					CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+					CIFSSend(cifs,buf,len+4);
+					if(!CIFSreadResponseSMB2(cifs,buf,512))    // 196
+						goto errore;
+					rsh=(SMB2_HEADER*)((char*)buf+4);
+					{SMB2_SETINFO_RESPONSE *ssr=(SMB2_SETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
+
+					}
+        
+					}
+        return 1;
+        }
+			}
+		}
+
+errore:
+	return 0;
+	}
+
+
+int8_t CIFSCloseSession(NETWORKDISK_STRUCT *cifs) {
+	uint8_t buf[512];
 	int i,len;
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
 			SMB2_HEADER *sh,*rsh;
 			SMB2_CLOSE_SESSION *scs;
 
-			sh=(SMB2_HEADER*)(buf+4);
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_ENDSESSION,1,1);
 			scs=(SMB2_CLOSE_SESSION*)(buf+sizeof(SMB2_HEADER)+4);
 			scs->Size.size=0x4;
@@ -1765,11 +1959,12 @@ int CIFSCloseSession(NETWORKDISK_STRUCT *cifs) {
 			len=4+sh->Size+(scs->Size.size & 0xfffe);
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(CIFSreadResponseSMB2(cifs,buf,68))
-				;
-			rsh=(SMB2_HEADER*)buf;
+			if(CIFSreadResponseSMB2(cifs,buf,512)) {   // 68
+  			rsh=(SMB2_HEADER*)((char*)buf+4);
+        
 
 //			SMB2_ENDSESSION_RESPONSE;		// usare...
+        }
 
 			}
 		cifs->sessionid=0;
@@ -1780,37 +1975,214 @@ int CIFSCloseSession(NETWORKDISK_STRUCT *cifs) {
 	return 0;
 	}
 
-int CIFSGetVolumeInfo(NETWORKDISK_STRUCT *cifs) {
-	uint8_t buf[1024],buf2[256];
+int8_t CIFSGetVolumeInfo(NETWORKDISK_STRUCT *cifs,char *d,FILETIMEPACKED *t) {
+	uint8_t buf[512];
 	int i,len;
 	SMB2_HEADER *sh,*rsh;
 	SMB2_GETINFO *sgi;
+  SMB2_CREATEFILE *scf;
+	SMB2_CLOSEFILE *sclf;
+  uint8_t guid[16];
 
-	if(cifs->FTPCFlags.Bits.bConnectedC) {
+	if(cifs->Flags.Bits.bConnectedD) {
 		if(cifs->version==1) {
 			}
 		else {
 // provare...
-			sh=(SMB2_HEADER*)(buf+4);
+      // credo che serva una Create prima, con filename vuoto  v.wireshark
+			sh=(SMB2_HEADER*)((char*)buf+4);
+			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
+			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
+			scf->Size.size=0x39;
+			scf->Oplock=SMB2_OPLOCK_LEVEL_LEASE;
+			scf->Impersonation=2;
+			scf->Flags=0;
+			scf->Reserved=0;
+			scf->AccessMask= SMB2_ACCESS_SYNCHRONIZE | SMB2_ACCESS_READATTRIBUTES | SMB2_ACCESS_READ;		// 0x00100081
+			scf->Attributes=0;
+			scf->ShareAccess=SMB2_FILE_SHARE_READ | SMB2_FILE_SHARE_WRITE | SMB2_FILE_SHARE_DELETE;			//
+			scf->Disposition=SMB2_FILE_OPEN;
+			scf->CreateOptions=SMB2_OPTION_SYNCIONO;	// 0x00000020		// SyncIO non-alert
+			scf->BlobFilenameOffset=0x00000078;
+			scf->BlobFilenameLength=0;
+			scf->BlobOffset=0x00000080;
+			scf->BlobLength=64;
+
+			memcpy(&scf->Blob,"\x28\x00\x00\x00\x10\x00\x04\x00\x00\x00\x18\x00\x10\x00\x00\x00"
+        "\x44\x48\x6e\x51\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+        "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x04\x00"
+        "\x00\x00\x18\x00\x00\x00\x00\x00\x4d\x78\x41\x63\x00\x00\x00\x00",64);
+
+			len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength    +8;
+			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+			CIFSSend(cifs,buf,len+4);
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 152
+				goto errore;
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
+			memcpy(guid,scr->FileGUID,16);		// FINIRE!
+			}
+
+			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_GETINFO,1,1);
 			sgi=(SMB2_GETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 			sgi->Size.size=0x29;
 			sgi->Class=SMB2_FS_INFO;
 			sgi->InfoLevel=SMB2_FILE_FS_VOLUME_INFO;		// 
-			sgi->MaxSize=24;
-			sgi->InputOffset=0x68;
+			sgi->MaxSize=88;
+			sgi->InputOffset=0;
 			sgi->Reserved=0;
 			sgi->InputSize=0;
 			sgi->AdditionalInfo=0;
 			sgi->Flags=0;
-//				memcpy(sgi->FileGUID,"\xf9\x00\x00\x00\x70\x00\x00\x00\xa9\x00\x30\x00\xff\xff\xff\xff",16);
-			memset(&sgi->FileGUID,0,16);
+			memcpy(&sgi->FileGUID,guid,16);
 			len=sh->Size+(sgi->Size.size & 0xfffe);
 			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
 			CIFSSend(cifs,buf,len+4);
-			if(CIFSreadResponseSMB2(cifs,buf,96))
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 96
 				goto errore;
-			rsh=(SMB2_HEADER*)buf;
+			{rsh=(SMB2_HEADER*)((char*)buf+4);
+			SMB2_GETINFO_RESPONSE *sgir=(SMB2_GETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
+      SMB2_FILEVOLUMEINFO *sfvi=(SMB2_FILEVOLUMEINFO*)(buf+sgir->BlobOffset   +4);
+      uniDecode(sfvi->Label,sfvi->LabelLength,d);
+      strupr(sfvi->Label);
+      *t=FiletimeToPackedTime(sfvi->CreateTime);
+      }
+
+			/*sh=(SMB2_HEADER*)((char*)buf+4);
+			CIFSprepareSMB2header(cifs,sh,SMB2_COM_GETINFO,1,1);
+			sgi=(SMB2_GETINFO*)(buf+sizeof(SMB2_HEADER)+4);
+			sgi->Size.size=0x29;
+			sgi->Class=SMB2_FS_INFO;
+			sgi->InfoLevel=SMB2_FILE_STANDARD_INFO;		// 
+			sgi->MaxSize=80;
+			sgi->InputOffset=0;
+			sgi->Reserved=0;
+			sgi->InputSize=0;
+			sgi->AdditionalInfo=0;
+			sgi->Flags=0;
+			memcpy(&sgi->FileGUID,guid,16);
+			len=sh->Size+(sgi->Size.size & 0xfffe);
+			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+			CIFSSend(cifs,buf,len+4);
+			if(!CIFSreadResponseSMB2(cifs,buf,512))    // 96
+				goto errore;
+			{rsh=(SMB2_HEADER*)((char*)buf+4);
+			SMB2_GETINFO_RESPONSE *sgir=(SMB2_GETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
+      SMB2_FILEFSINFO *sffi=(SMB2_FILEFSINFO*)((char*)sgir+sgir->BlobOffset);
+// bah qua c'è FSname "NTFS" e attributi del file system...
+      }*/
+
+      sh=(SMB2_HEADER*)((char*)buf+4);
+      CIFSprepareSMB2header(cifs,sh,SMB2_COM_CLOSE,1,1);
+      sclf=(SMB2_CLOSEFILE*)(buf+sizeof(SMB2_HEADER)+4);
+      sclf->Size.size=0x18;
+      sclf->Flags=0;
+      memcpy(sclf->FileGUID,guid,16);
+
+      len=sh->Size+(sclf->Size.size & 0xfffe);
+      CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+      CIFSSend(cifs,buf,len+4);
+      if(!CIFSreadResponseSMB2(cifs,buf,512))    // 120
+				goto errore;
+      rsh=(SMB2_HEADER*)((char*)buf+4);
+
+			return 1;
+			}
+		}
+
+errore:
+	return 0;
+	}
+
+int8_t CIFSVolumeInfo(NETWORKDISK_STRUCT *cifs,uint64_t *totalSectors,uint64_t *freeSectors,uint32_t *sectorSize) {
+	uint8_t buf[1024],buf2[256];
+	int i,len;
+	SMB2_HEADER *sh,*rsh;
+	SMB2_GETINFO *sgi;
+	SMB2_CREATEFILE *scf;
+	SMB2_CLOSEFILE *sclf;
+	uint8_t guid[16];
+
+	if(cifs->Flags.Bits.bConnectedD) {
+		if(cifs->version==1) {
+			}
+		else {
+// provare...
+      // credo che serva una Create prima, con filename vuoto  v.wireshark
+			sh=(SMB2_HEADER*)((char*)buf+4);
+			CIFSprepareSMB2header(cifs,sh,SMB2_COM_CREATE,1,1);
+			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
+			scf->Size.size=0x39;
+			scf->Oplock=SMB2_OPLOCK_LEVEL_LEASE;
+			scf->Impersonation=2;
+			scf->Flags=0;
+			scf->Reserved=0;
+			scf->AccessMask= SMB2_ACCESS_SYNCHRONIZE | SMB2_ACCESS_READATTRIBUTES | SMB2_ACCESS_READ;		// 0x00100081
+			scf->Attributes=0;
+			scf->ShareAccess=SMB2_FILE_SHARE_READ | SMB2_FILE_SHARE_WRITE | SMB2_FILE_SHARE_DELETE;			//
+			scf->Disposition=SMB2_FILE_OPEN;
+			scf->CreateOptions=SMB2_OPTION_SYNCIONO;	// 0x00000020		// SyncIO non-alert
+			scf->BlobFilenameOffset=0x00000078;
+			scf->BlobFilenameLength=0;
+			scf->BlobOffset=0x00000080;
+			scf->BlobLength=64;
+
+			memcpy(&scf->Blob,"\x28\x00\x00\x00\x10\x00\x04\x00\x00\x00\x18\x00\x10\x00\x00\x00"
+        "\x44\x48\x6e\x51\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+        "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x04\x00"
+        "\x00\x00\x18\x00\x00\x00\x00\x00\x4d\x78\x41\x63\x00\x00\x00\x00",64);
+
+			len=sh->Size+(scf->Size.size & 0xfffe)+scf->BlobLength+scf->BlobFilenameLength    +8;
+			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+			CIFSSend(cifs,buf,len+4);
+			if(!CIFSreadResponseSMB2(cifs,buf,1024))			// 152
+				goto errore;
+			rsh=(SMB2_HEADER*)((char*)buf+4);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   12);
+			memcpy(guid,scr->FileGUID,16);		// FINIRE!
+			}
+
+			//PROVARE!!
+			sh=(SMB2_HEADER*)((char*)buf+4);
+			CIFSprepareSMB2header(cifs,sh,SMB2_COM_GETINFO,1,1);
+			sgi=(SMB2_GETINFO*)(buf+sizeof(SMB2_HEADER)+4);
+			sgi->Size.size=0x29;
+			sgi->Class=SMB2_FS_INFO;
+			sgi->InfoLevel=SMB2_FILE_FULL_INFO;		// 
+			sgi->MaxSize=32;
+			sgi->InputOffset=68;
+			sgi->Reserved=0;
+			sgi->InputSize=0;
+			sgi->AdditionalInfo=0;
+			sgi->Flags=0;
+			memcpy(&sgi->FileGUID,guid,16);
+			len=sh->Size+(sgi->Size.size & 0xfffe);
+			CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+			CIFSSend(cifs,buf,len+4);
+			if(!CIFSreadResponseSMB2(cifs,buf,1024))		// 96
+				goto errore;
+			{rsh=(SMB2_HEADER*)((char*)buf+4);
+			SMB2_GETINFO_RESPONSE *sgir=(SMB2_GETINFO_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   4);
+      SMB2_FILEVOLUMESIZEINFO *sfvsi=(SMB2_FILEVOLUMESIZEINFO*)((char*)buf+sgir->BlobOffset+   4);
+			*totalSectors=sfvsi->ActualFreeUnits;		// o AllocSize??
+			*freeSectors=sfvsi->CallerFreeUnits;
+			*sectorSize=sfvsi->SectorsSize*sfvsi->SectorsPerUnit;   // per comodità!
+      }
+
+      sh=(SMB2_HEADER*)((char*)buf+4);
+      CIFSprepareSMB2header(cifs,sh,SMB2_COM_CLOSE,1,1);
+      sclf=(SMB2_CLOSEFILE*)(buf+sizeof(SMB2_HEADER)+4);
+      sclf->Size.size=0x18;
+      sclf->Flags=0;
+      memcpy(sclf->FileGUID,guid,16);
+
+      len=sh->Size+(sclf->Size.size & 0xfffe);
+      CIFSprepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
+      CIFSSend(cifs,buf,len+4);
+      if(!CIFSreadResponseSMB2(cifs,buf,1024))			// 120
+				goto errore;
+      rsh=(SMB2_HEADER*)((char*)buf+4);
 
 			return 1;
 			}
@@ -1893,14 +2265,54 @@ uint8_t *uniEncode(const char *src,uint8_t *dst) {
 	return dst;
 	}
 
+char *uniDecode(const uint8_t *src,uint16_t len,char *dst) {
+	char *p=dst;
+
+	while(len) {
+		*p++=*src++;
+		src++;
+    len-=2;
+		}
+	*p=0;
+
+	return dst;
+	}
+
 uint32_t FiletimeToTime(uint64_t value) {
 	//The FILETIME structure is a 64-bit value that represents the number of 100-nanosecond intervals that have elapsed since January 1, 1601, Coordinated Universal Time (UTC).
-#define FILETIME_EPOCH_VALUE 116444736000000000L
+#define FILETIME_EPOCH_VALUE 116444736000000000ULL
 
 	uint32_t t;
 	value-=FILETIME_EPOCH_VALUE;
 	value /= 10000000UL;
 	t=value;		// va uguale, ok per PC_PIC
+	
+	return t;
+	}
+
+FILETIMEPACKED FiletimeToPackedTime(uint64_t value) {
+	uint32_t t;
+  PIC32_DATE date;
+  PIC32_TIME time;
+  FILETIMEPACKED ft;
+
+  t=FiletimeToTime(value);
+  SetTimeFromNow(t,&date,&time);
+  ft.day=date.mday;
+  ft.mon=date.mon;
+  ft.year=date.year-1980;
+  ft.hour=time.hour;
+  ft.min=time.min;
+  ft.sec=time.sec;
+	
+	return ft;
+	}
+
+uint64_t TimeToFiletime(uint32_t value) {
+	//The FILETIME structure is a 64-bit value that represents the number of 100-nanosecond intervals that have elapsed since January 1, 1601, Coordinated Universal Time (UTC).
+
+	uint64_t t=(uint64_t)value*10000000ULL;
+	t+=FILETIME_EPOCH_VALUE;
 	
 	return t;
 	}

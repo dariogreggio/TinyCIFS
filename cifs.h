@@ -6,26 +6,21 @@
 #ifndef _CIFS_DEFINED
 #define _CIFS_DEFINED
 
-//#include <afxsock.h>
-//#include "stdafx.h"
-#include "resource.h"       // main symbols
-#include "afxtempl.h"
-#include "testsocket.h"
 #include <stdint.h>
+#include "pc_pic_cpu.h"
+#include "FAT_SD/FSIO.h"
 
 typedef unsigned char UCHAR;		// 8 unsigned bits
 typedef unsigned short USHORT;		// 16 unsigned bits
 typedef unsigned long ULONG;		// 32 unsigned bits
 
 
-#pragma pack( push, before_structs )
-#pragma pack(1)
-typedef struct {
+typedef struct __attribute__((__packed__)) {
   ULONG LowPart;
   LONG HighPart;
 	} LARGE_INTEGER_2;				// 64 bits of data			c'è già in windows!
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	ULONG LowTime;
 	LONG HighTime;
 	} TIME;
@@ -34,7 +29,7 @@ typedef struct {
 // Header
 
 // https://grokipedia.com/page/NetBIOS_over_TCP%2FIP#general-netbios-header
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	uint8_t Type;
 	uint8_t Flags;
 	uint16_t Length;
@@ -43,11 +38,11 @@ typedef struct {
 
 //#define WordCount 1			// sistemare
 //#define ByteCount 1
-typedef struct  {
+typedef struct __attribute__((__packed__)) {
   UCHAR Protocol[4];                  // Contains 0xFF,'SMB' 
   UCHAR Command;                      // Command code
-  union {
-    struct {
+  union __attribute__((__packed__)) {
+    struct __attribute__((__packed__)) {
       UCHAR ErrorClass;           // Error class
       UCHAR Reserved;             // Reserved for future use
       USHORT Error;        		// Error code
@@ -56,11 +51,11 @@ typedef struct  {
 		} Status;
   UCHAR Flags;                        // Flags
   USHORT Flags2;   	             // More flags
-  union {
+  union __attribute__((__packed__)) {
     USHORT Pad[6];        	       // Ensure this section is 12 bytes
-    struct {
+    struct __attribute__((__packed__)) {
       USHORT PidHigh;             // High part of PID (NT Create And X)
-      struct {
+      struct __attribute__((__packed__)) {
         ULONG  HdrReserved;     // Not used
         USHORT Sid;             // Session ID
         USHORT SequenceNumber;  // Sequence number
@@ -77,16 +72,16 @@ typedef struct  {
   UCHAR  Buffer[1 /*ByteCount*/];		// The bytes
 	} SMB1_HEADER;
 
-typedef struct  {
+typedef struct __attribute__((__packed__)) {
   UCHAR Protocol[4];                  // Contains 0xFE,'SMB'
   USHORT Size;                      // 
   USHORT CreditCharge;
-	union {
-		struct {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 		  USHORT ChannelSequence;
 		  USHORT Reserved;
 			};
-	  ULONG  Status;                      // (ChannelSequence,Reserved)/Status
+	  ULONG Status;                      // (ChannelSequence,Reserved)/Status
 		};
   USHORT Command;                      // Command code
 	USHORT CreditsRequested;
@@ -110,9 +105,9 @@ typedef struct  {
 #define SMB2_FLAG_REPLAYOP 0x20000000
 
 
-typedef struct  {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -140,9 +135,9 @@ typedef struct  {
 #define SMB2_NEGOTIATE_DIRLEASING 0x00000020
 #define SMB2_NEGOTIATE_ENCRYPTION 0x00000040
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -158,9 +153,9 @@ typedef struct {
 	UCHAR SecurityBlob[  256];		// forse andrebbe dinamico..
 	} SMB2_OPEN_SESSION;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -171,9 +166,9 @@ typedef struct {
 		SMB2_ECHO_REQUEST,SMB2_ECHO_RESPONSE,		// vabbe' :)
 		SMB2_CANCEL_REQUEST;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -185,9 +180,9 @@ typedef struct {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
 	} SMB2_TREE_CONNECT;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -203,9 +198,9 @@ typedef struct {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
 	} SMB2_FIND;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -346,9 +341,9 @@ enum {
 #define SMB2_INDEX_SPECIFIED 0x04 //The server is requested to return entries beginning at the byte number specified by FileIndex.
 #define SMB2_REOPEN 0x10 //The server is requested to restart the enumeration from the beginning, and the search pattern is to be changed to the provided value.
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -368,9 +363,9 @@ typedef struct {
 	} SMB2_READFILE;
 
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -388,9 +383,9 @@ typedef struct {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
 	} SMB2_WRITEFILE;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -401,9 +396,9 @@ typedef struct {
 	UCHAR FileGUID[16];
 	} SMB2_CLOSEFILE;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -424,9 +419,9 @@ typedef struct {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
 	} SMB2_IOCTL;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -443,7 +438,7 @@ typedef struct {
 	UCHAR FileGUID[16];
 	} SMB2_GETINFO;
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	uint8_t ReplaceIf;
 	uint8_t Reserved[7];
 	uint64_t RootDirHandle;
@@ -452,6 +447,38 @@ typedef struct {
   } SMB2_FILERENAMEINFO;
 
 typedef struct {
+	uint64_t CreateTime;
+	uint64_t AccessTime;
+	uint64_t WriteTime;
+	uint64_t ModifiedTime;
+	ULONG Attrib;
+	ULONG Unknown;		// ...wireshark
+  } SMB2_FILEBASICINFO;
+  
+typedef struct {
+	uint64_t CreateTime;
+	ULONG SerialNumber;
+	uint32_t LabelLength;
+	USHORT Reserved;
+	UCHAR Label[  256];		// forse andrebbe dinamico..
+  } SMB2_FILEVOLUMEINFO;
+  
+typedef struct {
+	uint64_t AllocSize;
+	uint64_t CallerFreeUnits;
+	uint64_t ActualFreeUnits;
+	ULONG SectorsPerUnit;
+	ULONG SectorsSize;
+  } SMB2_FILEVOLUMESIZEINFO;
+  
+typedef struct {
+	ULONG Attrib;
+	uint32_t MaxLabelLength;
+	uint32_t LabelLength;
+	UCHAR Label[  256];		// forse andrebbe dinamico..
+  } SMB2_FILEFSINFO;
+  
+typedef struct __attribute__((__packed__)) {
 	uint64_t CreationTime;
 	uint64_t AccessTime;
 	uint64_t WriteTime;
@@ -461,9 +488,9 @@ typedef struct {
 	ULONG Reserved;
   } SMB2_NETWORKOPENINFO;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -483,9 +510,9 @@ typedef struct {
 #define SMB2_FILE_ENDOFFILE_INFO 0x14
 
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -508,9 +535,9 @@ typedef struct {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
   } SMB2_NEGOTIATE_RESPONSE;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -526,9 +553,9 @@ typedef struct {
 #define SMB2_SESSION_NULL 0x00000002
 #define SMB2_SESSION_ENCRYPT 0x00000004
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -537,9 +564,9 @@ typedef struct {
 	USHORT Reserved;
   } SMB2_ENDSESSION_RESPONSE;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -552,9 +579,9 @@ typedef struct {
 	ULONG AccessMask;
 	} SMB2_TREE_CONNECT_RESPONSE;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -563,9 +590,9 @@ typedef struct {
 	USHORT Reserved;
   } SMB2_TREEDISCONNECT_RESPONSE;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -578,7 +605,7 @@ typedef struct {
 	UCHAR Blob[  256];		// v. SMB2_FIND_RESPONSE_INFO
   } SMB2_FIND_RESPONSE;
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	ULONG NextOffset;
 	ULONG FileIndex;
 	uint64_t CreationTime;
@@ -592,15 +619,14 @@ typedef struct {
 	ULONG EASize;
 	UCHAR ShortNameLength;
 	UCHAR Reserved;
-	USHORT Reserved2;
-	uint8_t ShortFileName[12*2];		// unicode
-	uint64_t FileID;		// SOLO se richiesto! occhio al tipo richiesta, fare diverse struct...
+	uint8_t ShortFileName[12*2];		// unicode; anche se richiesto, c'è SOLO se il nome lungo è > 12 char
+//	uint64_t FileID;		// SOLO se richiesto! occhio al tipo richiesta, fare diverse struct...
 	char FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
   } SMB2_FIND_RESPONSE_INFO;		// sono 104byte + len(Filename) paddato a 8, ciascuna, v. NextOffset
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -622,9 +648,9 @@ typedef struct {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
   } SMB2_CREATE_RESPONSE;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -638,9 +664,9 @@ typedef struct {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
   } SMB2_READ_RESPONSE;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -653,9 +679,9 @@ typedef struct {
 	USHORT ChannelInfoLength;
   } SMB2_WRITE_RESPONSE;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -672,9 +698,9 @@ typedef struct {
 	ULONG Attrib;
   } SMB2_CLOSE_RESPONSE;
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -690,9 +716,9 @@ typedef struct {
 #define FSCTL_CREATE_GET_REPARSEPOINT 0x000900a8
 
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -703,9 +729,9 @@ typedef struct {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
   } SMB2_GETINFO_RESPONSE;			// dipende dal tipo di Info richiesta...
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -716,9 +742,9 @@ typedef struct {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
   } SMB2_SETINFO_RESPONSE;			// dipende dal tipo di Info impostata...
 
-typedef struct {
-	union {
-		struct {
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
 			unsigned short fixedPart:15;
 			};
@@ -730,20 +756,20 @@ typedef struct {
   } SMB2_LOGOFF_RESPONSE;
 
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	USHORT Length;
 	UCHAR Data[1/*Length*/];
   } SMB_RESPONSE;
 
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
   USHORT Day : 5;
   USHORT Month : 4;
   USHORT Year : 7;
 	} SMB_DATE;
 //The Year field has a range of 0-119, which represents years 1980 - 2099.  The Month is encoded as 1-12, and the day ranges from 1-31.
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
   USHORT TwoSeconds : 5;
   USHORT Minutes : 6;
   USHORT Hours : 5;
@@ -751,7 +777,7 @@ typedef struct {
 //Hours ranges from 0-23, Minutes range from 0-59, and TwoSeconds ranges from 0-29 representing two second increments within the minute.
 
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	uint8_t hdr[4];		// boh 60 48 06 06
 	uint8_t OID[6];		// boh SPNEGO 2b 06 01 05 05 02
 	uint8_t boh[2];			// boh a0 3e
@@ -775,7 +801,7 @@ typedef struct {
 	uint8_t versionNTLMrev;
 	} NEG_TOKEN_INIT;
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	uint8_t hdr[3];		// boh a1 81 b0
 	uint8_t hdr2[7];		// boh 30 81 ad a0 03 0a 01
 	uint8_t negResult;	// 1 = incomplete
@@ -801,14 +827,14 @@ typedef struct {
 	uint8_t versionUnused[3];
 	uint8_t versionNTLMrev;
 	uint8_t name[12];		// in effetti è dinamico basato su length...
-	struct {
+	struct __attribute__((__packed__)) {
 		uint16_t type;
 		uint16_t length;
 		uint8_t name[12];		// in effetti è dinamico basato su length...
 		} attribute[6];
 	} NEG_TOKEN_TARG;			// dal server
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	uint8_t hdr[3];		// boh a1 81 99
 	uint8_t hdr2[7];		// boh 30 81 96 a0 03 0a 01
 	uint8_t negResult;	// 1 = incomplete
@@ -850,7 +876,7 @@ typedef struct {
 	uint8_t verifierBody[12];		// 
 	} NEG_TOKEN_TARG2;		// in risposta
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	uint8_t hdr[2];		// boh a1 1b ;  se guest  a1 07
 	uint8_t hdr2[6];		// boh 30 19 a0 03 0a 01 ;  se guest 30 05 a0 03 0a 01
 	uint8_t negResult;	// 0 = accept complete
@@ -859,7 +885,6 @@ typedef struct {
 	} NEG_TOKEN_TARG3;		// in conferma dal server
 
 
-#pragma pack( pop, before_structs )
 
 /* Negotiate Flags */
 #define NTLMSSP_NEGOTIATE_56                        (1U << 31)		//
@@ -1681,7 +1706,7 @@ POSIX-style error codes where possible. Note that multiple NTSTATUS values can m
 //SUCCESS Class 0x00
 //Error code	NTSTATUS values	POSIX equivalent	Description
 #define SUCCESS 0x0000
-#define STATUS_OK 0x00000000		//Everything worked, no problems.
+// c'è già  #define STATUS_OK 0x00000000		//Everything worked, no problems.
 
 //ERRDOS Class 0x01
 //Error code	NTSTATUS values	POSIX equivalent	Description
@@ -2052,108 +2077,48 @@ POSIX-style error codes where possible. Note that multiple NTSTATUS values can m
 //ENOSPC
 //ERRCMD Class 0xFF
 
+    
+typedef struct __attribute__((__packed__)) _NETWORKDISK_STRUCT NETWORKDISK_STRUCT;
 
+	int8_t CIFSConnect(NETWORKDISK_STRUCT *, const char *);
+	BOOL CIFSDisconnect(NETWORKDISK_STRUCT *);
+	static int CIFSSend(NETWORKDISK_STRUCT *, const uint8_t *,uint16_t);
+	static int CIFSreadResponseNBSS(NETWORKDISK_STRUCT *, uint8_t *buf,uint16_t len);
+	static int CIFSreadResponseSMB2(NETWORKDISK_STRUCT *, uint8_t *buf,uint16_t len);
+	static SMB2_HEADER *CIFSprepareSMB2header(NETWORKDISK_STRUCT *, SMB2_HEADER *,uint16_t,uint8_t,uint16_t);
+	static uint8_t *CIFSprepareSMBcode(uint8_t *,uint8_t,uint32_t);
+	char *nbEncode(const char *,char *,BOOL mode);
+	uint8_t *uniEncode(const char *,uint8_t *);
+    char *uniDecode(const uint8_t *src,uint16_t len,char *dst);
+    uint32_t FiletimeToTime(uint64_t value);
+    uint64_t TimeToFiletime(uint32_t value);
+    FILETIMEPACKED FiletimeToPackedTime(uint64_t value);
 
-class CCIFSCliSocket : public CSocket {
-public:
-	uint8_t version;
-	uint8_t mode;
-	bool isConnected;
+	int8_t CIFSOpenSession(NETWORKDISK_STRUCT *,const char *server,const char *user,const char *pasw);
+	int8_t CIFSCloseSession(NETWORKDISK_STRUCT *);
+	int8_t CIFSOpenShare(NETWORKDISK_STRUCT *,const char *share);
+	int8_t CIFSCloseShare(NETWORKDISK_STRUCT *);
+	int8_t CIFSFindFirst(NETWORKDISK_STRUCT *,const char *,uint8_t,void *);
+	int8_t CIFSFindNext(NETWORKDISK_STRUCT *);
+	int8_t CIFSChDir(NETWORKDISK_STRUCT *,const char *);
+	int8_t CIFSMkDir(NETWORKDISK_STRUCT *,const char *);
+	int8_t CIFSRmDir(NETWORKDISK_STRUCT *,const char *);
+	int8_t CIFSOpenFile(NETWORKDISK_STRUCT *,const char *s,uint8_t mode,uint8_t share);
+	int8_t CIFSReadFile(NETWORKDISK_STRUCT *,uint8_t *buf,uint32_t size);
+	int8_t CIFSWriteFile(NETWORKDISK_STRUCT *,const uint8_t *buf,uint32_t size);
+	int8_t CIFSCloseFile(NETWORKDISK_STRUCT *);
+	int8_t CIFSDeleteFile(NETWORKDISK_STRUCT *,const char *s);
+	int8_t CIFSRenameFile(NETWORKDISK_STRUCT *,const char *s,const char *d);
+	int8_t CIFSGetVolumeInfo(NETWORKDISK_STRUCT *,char *,FILETIMEPACKED *);
+	int8_t CIFSVolumeInfo(NETWORKDISK_STRUCT *,uint64_t *,uint64_t *,uint32_t *);
+	int8_t CIFSFileStat(NETWORKDISK_STRUCT *,const char *s,struct FSstat *);
+    int8_t CIFSSetFileTime(NETWORKDISK_STRUCT *cifs,const char *,uint32_t);
+    int8_t CIFSAttrib(NETWORKDISK_STRUCT *cifs,const char *,uint8_t,uint8_t);
 
-private:
-	uint64_t msgcnt;
-	uint16_t dialect;		// 
-	uint32_t processid;
-	uint64_t sessionid;
-	uint32_t treeid;
-	uint8_t security;
-	uint8_t fileguid[16];
-	uint8_t dirguid[16];
-	uint32_t fileoffset;
-
-public:
-	BOOL Connect(LPCTSTR s);
-	BOOL Disconnect();
-	int Send(const void *,uint16_t);
-	int readResponseNBSS(uint8_t *buf,DWORD len,WORD timeout=2000);
-	int readResponseSMB2(uint8_t *buf,DWORD len,WORD timeout=2000);
-	int readData(uint8_t *buf,DWORD len,WORD timeout=2000);
-	SMB2_HEADER *prepareSMB2header(SMB2_HEADER *,uint16_t,uint8_t,uint16_t);
-	static uint8_t *prepareSMBcode(uint8_t *,uint8_t,uint32_t);
-	static char *nbEncode(const char *,char *,bool mode);
-	static uint8_t *uniEncode(const char *,uint8_t *);
-	static CTime FiletimeToTime(uint64_t);
-	uint64_t getSid() { return sessionid; }
-
-	int OpenSession(LPCTSTR server,LPCTSTR user=NULL,LPCTSTR pasw=NULL);
-	int CloseSession();
-	int OpenShare(LPCTSTR share);
-	int CloseShare();
-	int FindFirst(LPCTSTR filter);
-	int FindNext();
-	int ChDir(LPCTSTR s);
-	int MkDir(LPCTSTR s);
-	int RmDir(LPCTSTR s);
-	int OpenFile(LPCTSTR s,uint8_t mode,uint8_t share);
-	int ReadFile(uint8_t *buf,uint32_t size);
-	int WriteFile(uint8_t *buf,uint32_t size);
-	int CloseFile();
-	int DeleteFile(LPCTSTR s);
-	int RenameFile(LPCTSTR s,LPCTSTR d);
-	int GetVolumeInfo();
-	int FileStat(LPCTSTR s,struct stat *);
-
-	CCIFSCliSocket(uint8_t ver=2,uint8_t mode=1,uint8_t sec=1/* 1=signing-on (se no ti rimbalza), 2=NTLMSSP fisso per ora,v.*/);
+	void CIFSCliSocket(NETWORKDISK_STRUCT *,uint8_t ver,uint8_t mode,uint8_t sec/* 1=signing-on (se no ti rimbalza), 2=NTLMSSP fisso per ora,v.*/);
 		// mode=1 per TCP diretto su 445, 0 per Netbios/139
-	~CCIFSCliSocket();
-
-	};
-        
-class CCIFSSrvSocket;
-class CCIFSSrvSocket2 : public CSocket {
-public:
-	CCIFSSrvSocket *m_Parent;
-	DWORD cliTimeOut;
-	CTime startConn;			// il momento di inizio connessione...
-	CCIFSSrvSocket2 *next;
-
-private:
-
-public:
-	void OnReceive(int);
-	void OnClose(int);
-
-	CCIFSSrvSocket2(CCIFSSrvSocket *p=NULL);		// TOGLIERE default quando implementi la lista e togli l'array di client!!!
-	~CCIFSSrvSocket2();
-	friend class CCCIFSSrvSocket;
-protected:
-	};
-
-class CCIFSSrvSocket : public CSocket {
-public:
-	enum { 
-		bufSize=40000,
-		chunkSize=32768,
-		maxClientConnections=4
-		};
-
-	int maxConn;
-	uint16_t port;
-	uint8_t version;
-	CList < CCIFSSrvSocket2 *, CCIFSSrvSocket2 * > cSockRoot;
-
-public:
-	void checkUtenti();
-	BOOL Create();
-	void OnAccept(int);
-	void OnClose(int);
-	void doDelete(CCIFSSrvSocket2 *);
-
-	CCIFSSrvSocket(UINT nPort=445,CTestsocketApp *parent=NULL);
-	~CCIFSSrvSocket();
-protected:
-	CTestsocketApp *m_Parent;
-	};
+    
+#define CIFS_TIMEOUT 2000      // 
 
 #endif
 
