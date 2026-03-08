@@ -635,6 +635,7 @@ typedef struct __attribute__((__packed__)) {
 	UCHAR Oplock;
 	UCHAR Flags;
 	ULONG Action;
+	uint64_t CreateTime;
 	uint64_t AccessTime;
 	uint64_t WriteTime;
 	uint64_t ModifiedTime;
@@ -2117,6 +2118,10 @@ typedef struct __attribute__((__packed__)) _NETWORKDISK_STRUCT NETWORKDISK_STRUC
 
 	void CIFSCliSocket(NETWORKDISK_STRUCT *,uint8_t ver,uint8_t mode,uint8_t sec/* 1=signing-on (se no ti rimbalza), 2=NTLMSSP fisso per ora,v.*/);
 		// mode=1 per TCP diretto su 445, 0 per Netbios/139
+    
+    BYTE CIFS_MediaDetect(MEDIA_INFORMATION *);
+    void CIFS_initIO(MEDIA_INFORMATION *);
+
     
 #define CIFS_TIMEOUT 2000      // 
 
