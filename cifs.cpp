@@ -2,6 +2,7 @@
 #include "testsocket.h"
 #include <stdint.h>
 #include <mmsystem.h>		//rompe il cazzo
+#include <direct.h>
 
 //uint32_t timeGetTime();
 
@@ -9,6 +10,10 @@
 #include "cifs.h"
 	
 //https://amitschendel1.medium.com/smb-going-from-zero-to-hero-ff686e907e81
+
+//https://www.wireshark.org/docs/wsar_html/packet-smb2_8h_source.html
+//  per definizioni struct costanti ecc di SMB2
+
 
 CCIFSCliSocket::CCIFSCliSocket(uint8_t ver,uint8_t m,uint8_t sec) : version(ver),mode(m),security(sec) {
 
@@ -33,7 +38,7 @@ CCIFSCliSocket::~CCIFSCliSocket() {
 BOOL CCIFSCliSocket::Connect(LPCTSTR s) {
 
 	if(CSocket::Create()) {
-		return CSocket::Connect(s,mode ? 445 : 139);
+		return CSocket::Connect(s,7700 /*mode ? 445 : 139*/);
 		}
 	int i=GetLastError();
 	return FALSE;
@@ -202,7 +207,7 @@ SMB2_HEADER *CCIFSCliSocket::prepareSMB2header(SMB2_HEADER *sh,uint16_t cmd,uint
 	sh->Size=64;
 	sh->CreditCharge=ccharge;
 	sh->ChannelSequence=0;
-	sh->Reserved=0;
+	sh->Reserved=0;		// OCCHIO è insieme a Status!
 	sh->Command=cmd;
 	sh->CreditsRequested=crequest;
 	sh->Flags=0;
@@ -370,7 +375,7 @@ int CCIFSCliSocket::OpenSession(LPCTSTR s,LPCTSTR user,LPCTSTR pasw) {
 			if(!security)		// beh sì :)
 				goto fatto_errore;
 			sessionid=rsh->SessionID;
-			{NEG_TOKEN_TARG *ntlm=(NEG_TOKEN_TARG*)(buf+sizeof(SMB2_HEADER)+   8);
+			{NEG_TOKEN_TARG *ntlm=(NEG_TOKEN_TARG*)(buf+sizeof(SMB2_HEADER)+   0);
 
 			SMB2_OPENSESSION_RESPONSE;		// usare
 
@@ -556,6 +561,7 @@ int CCIFSCliSocket::OpenShare(LPCTSTR s) {
 				prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
 				scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 				scf->Size.size=0x39;
+				scf->SecurityFlags=0;
 				scf->Oplock=SMB2_OPLOCK_LEVEL_NONE;
 				scf->Impersonation=2;
 				scf->Flags=0;
@@ -582,7 +588,7 @@ int CCIFSCliSocket::OpenShare(LPCTSTR s) {
 				if(readResponseSMB2(buf,1024))		// 152
 					;		// se ok/completo
 				rsh=(SMB2_HEADER*)buf;
-				{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+				{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 				memcpy(fileguid,scr->FileGUID,16);		// FINIRE!
 				}
 
@@ -820,6 +826,7 @@ int CCIFSCliSocket::FindFirst(LPCTSTR s) {
 			prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
+			scf->SecurityFlags=0;
 			scf->Oplock=SMB2_OPLOCK_LEVEL_LEASE;
 			scf->Impersonation=2;
 			scf->Flags=0;
@@ -850,7 +857,7 @@ int CCIFSCliSocket::FindFirst(LPCTSTR s) {
 			if(!readResponseSMB2(buf,1024))		// 152
 				goto errore;
 			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 			memcpy(guid,scr->FileGUID,16);		// FINIRE!
 			}
 
@@ -858,9 +865,12 @@ int CCIFSCliSocket::FindFirst(LPCTSTR s) {
 
 			sh=(SMB2_HEADER*)(buf+4);
 			prepareSMB2header(sh,SMB2_COM_FIND,1,1);
+			sh->Flags;		// v. SMB2_FLAG_CHAINED   FIND in certi casi tipo la DIR da dos...
+
 			sf=(SMB2_FIND*)(buf+sizeof(SMB2_HEADER)+4);
 			sf->Size.size=0x21;
 			sf->InfoLevel=FileBothDirectoryInformation  /*FileIdBothDirectoryInformation*/;		// 
+
 			sf->FindFlags=0;
 			sf->FileIndex=0;
 			memcpy(sf->FileGUID,guid,16);
@@ -875,8 +885,8 @@ int CCIFSCliSocket::FindFirst(LPCTSTR s) {
 			if(!readResponseSMB2(buf,2000))		// 1000
 				goto errore;
 			rsh=(SMB2_HEADER*)buf;
-			{SMB2_FIND_RESPONSE *sfr=(SMB2_FIND_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
-			SMB2_FIND_RESPONSE_INFO *sfri=(SMB2_FIND_RESPONSE_INFO*)(buf+sizeof(SMB2_HEADER)+   8);
+			{SMB2_FIND_RESPONSE *sfr=(SMB2_FIND_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   0);
+			SMB2_FIND_RESPONSE_INFO4 *sfri=(SMB2_FIND_RESPONSE_INFO4*)(buf+sizeof(SMB2_HEADER)+   8);		// ossia SMB2_FIND_RESPONSE
 			do {			// il "." c'è sempre, anche se la Dir è vuota
 					if(sfri->ShortNameLength) {
 //						unidecode(sfri->ShortFileName);
@@ -888,7 +898,7 @@ int CCIFSCliSocket::FindFirst(LPCTSTR s) {
 				files++;
 				if(!sfri->NextOffset)
 					break;
-				sfri=(SMB2_FIND_RESPONSE_INFO*)(((char*)sfri)+sfri->NextOffset);
+				sfri=(SMB2_FIND_RESPONSE_INFO4*)(((char*)sfri)+sfri->NextOffset);
 				if((((uint8_t*)sfri)-buf)>=2000)		// patch per buffer piccolo!
 					break;
 				} while(1);
@@ -899,6 +909,12 @@ AfxMessageBox(Dir+S);
 			}
 			}
 
+
+			if(0) {		// SOLO se ho chiesto CHAINED sopra
+				readResponseSMB2(buf,1024);		// 152
+				if(rsh->Status != STATUS_NO_MORE_FILES)
+					goto errore;
+				}
 
 			sh=(SMB2_HEADER*)(buf+4);
 			prepareSMB2header(sh,SMB2_COM_CLOSE,1,1);
@@ -923,7 +939,7 @@ errore:
 	}
 
 int CCIFSCliSocket::FindNext() {
-	SMB2_FIND_RESPONSE_INFO *sfri;
+	SMB2_FIND_RESPONSE_INFO4 *sfri;
 
 	return 0;
 	}
@@ -984,6 +1000,7 @@ int CCIFSCliSocket::ChDir(LPCTSTR s) {
 			prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
+			scf->SecurityFlags=0;
 			scf->Oplock=SMB2_OPLOCK_LEVEL_LEASE;
 			scf->Impersonation=2;
 			scf->Flags=0;
@@ -1014,7 +1031,7 @@ int CCIFSCliSocket::ChDir(LPCTSTR s) {
 			if(!readResponseSMB2(buf,1024))		// 152
 				goto errore;
 			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 			memcpy(dirguid,scr->FileGUID,16);		// FINIRE!
 			}
 
@@ -1057,6 +1074,7 @@ int CCIFSCliSocket::MkDir(LPCTSTR s) {
 			prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
+			scf->SecurityFlags=0;
 			scf->Oplock=SMB2_OPLOCK_LEVEL_NONE;
 			scf->Impersonation=2;
 			scf->Flags=0;
@@ -1080,7 +1098,7 @@ int CCIFSCliSocket::MkDir(LPCTSTR s) {
 			if(readResponseSMB2(buf,1024)) {		// 152
 				
 				rsh=(SMB2_HEADER*)buf;
-				{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+				{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 //				memcpy(fileguid,scr->FileGUID,16);		// FINIRE!
 				}
 				return 1;
@@ -1109,6 +1127,7 @@ int CCIFSCliSocket::RmDir(LPCTSTR s) {
 			prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
+			scf->SecurityFlags=0;
 			scf->Oplock=SMB2_OPLOCK_LEVEL_LEASE;
 			scf->Impersonation=2;
 			scf->Flags=0;
@@ -1130,7 +1149,7 @@ int CCIFSCliSocket::RmDir(LPCTSTR s) {
 			if(!readResponseSMB2(buf,1024))		// 152
 				goto errore;
 			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 			memcpy(guid,scr->FileGUID,16);		// 
 			}
 
@@ -1138,7 +1157,7 @@ int CCIFSCliSocket::RmDir(LPCTSTR s) {
 			prepareSMB2header(sh,SMB2_COM_SETINFO,1,1);
 			si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 			si->Size.size=0x21;
-			si->Class=1;
+			si->Class=SMB2_FS_FILE_INFO;
 			si->InfoLevel=SMB2_FILE_DISPOSITION_INFO;
 			si->InfoSize=1;
 			si->InfoOffset=0x0060;
@@ -1198,6 +1217,7 @@ int CCIFSCliSocket::OpenFile(LPCTSTR s,uint8_t mode,uint8_t share) {
 			prepareSMB2header(sh,SMB2_COM_CREATE,1,320);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
+			scf->SecurityFlags=0;
 			scf->Oplock=SMB2_OPLOCK_LEVEL_LEASE;
 			scf->Impersonation=2;
 			scf->Flags=0;
@@ -1247,7 +1267,7 @@ int CCIFSCliSocket::OpenFile(LPCTSTR s,uint8_t mode,uint8_t share) {
 			if(!readResponseSMB2(buf,1024))		// 152
 				goto errore;
 			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 			if(rsh->Status==STATUS_OK) {
 				memcpy(fileguid,scr->FileGUID,16);		// FINIRE!
 
@@ -1331,7 +1351,7 @@ int CCIFSCliSocket::WriteFile(uint8_t *data,uint32_t size) {
 			// bah questo non penso che serva davvero, allora credo solo lo spazio
 			si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 			si->Size.size=0x21;
-			si->Class=1;
+			si->Class=SMB2_FS_FILE_INFO;
 			si->InfoLevel=SMB2_FILE_ENDOFFILE_INFO;
 			si->InfoSize=8;
 			si->InfoOffset=0x0060;
@@ -1444,6 +1464,7 @@ int CCIFSCliSocket::DeleteFile(LPCTSTR s) {
 			prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
+			scf->SecurityFlags=0;
 			scf->Oplock=SMB2_OPLOCK_LEVEL_LEASE;
 			scf->Impersonation=2;
 			scf->Flags=0;
@@ -1465,7 +1486,7 @@ int CCIFSCliSocket::DeleteFile(LPCTSTR s) {
 			if(!readResponseSMB2(buf,1024))		// 152
 				goto errore;
 			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 			memcpy(guid,scr->FileGUID,16);		// 
 			}
 
@@ -1473,7 +1494,7 @@ int CCIFSCliSocket::DeleteFile(LPCTSTR s) {
 			prepareSMB2header(sh,SMB2_COM_SETINFO,1,1);
 			si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 			si->Size.size=0x21;
-			si->Class=1;
+			si->Class=SMB2_FS_FILE_INFO;
 			si->InfoLevel=SMB2_FILE_DISPOSITION_INFO;
 			si->InfoSize=1;
 			si->InfoOffset=0x0060;
@@ -1536,6 +1557,7 @@ int CCIFSCliSocket::RenameFile(LPCTSTR s,LPCTSTR d) {
 			prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
+			scf->SecurityFlags=0;
 			scf->Oplock=SMB2_OPLOCK_LEVEL_LEASE;
 			scf->Impersonation=2;
 			scf->Flags=0;
@@ -1557,7 +1579,7 @@ int CCIFSCliSocket::RenameFile(LPCTSTR s,LPCTSTR d) {
 			if(!readResponseSMB2(buf,1024))			// 152
 				goto errore;
 			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 			memcpy(guid,scr->FileGUID,16);		// 
 			}
 
@@ -1565,7 +1587,7 @@ int CCIFSCliSocket::RenameFile(LPCTSTR s,LPCTSTR d) {
 			prepareSMB2header(sh,SMB2_COM_SETINFO,1,1);
 			si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 			si->Size.size=0x21;
-			si->Class=1;
+			si->Class=SMB2_FS_FILE_INFO;
 			si->InfoLevel=SMB2_FILE_RENAME_INFO;
 			si->InfoOffset=0x0060;
 			si->Reserved=0;
@@ -1637,6 +1659,7 @@ int CCIFSCliSocket::FileStat(LPCTSTR s,	struct stat *statbuf) {
 				prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
 				scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 				scf->Size.size=0x39;
+				scf->SecurityFlags=0;
 				scf->Oplock=SMB2_OPLOCK_LEVEL_NONE;
 				scf->Impersonation=2;
 				scf->Flags=0;
@@ -1662,7 +1685,7 @@ int CCIFSCliSocket::FileStat(LPCTSTR s,	struct stat *statbuf) {
 				Send(&buf,len+4);
 				if(readResponseSMB2(buf,1024)) {		// 152
 					rsh=(SMB2_HEADER*)buf;
-					{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+					{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 					statbuf->st_size=scr->EOFSize;
 					statbuf->st_atime=*(uint32_t*)&FiletimeToTime(scr->AccessTime);
 					statbuf->st_ctime=*(uint32_t*)&FiletimeToTime(scr->WriteTime);
@@ -1728,6 +1751,7 @@ int CCIFSCliSocket::SetFileTime(const char *s, CTime t) {
       prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
       scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
       scf->Size.size=0x39;
+			scf->SecurityFlags=0;
       scf->Oplock=SMB2_OPLOCK_LEVEL_NONE;
       scf->Impersonation=2;
       scf->Flags=0;
@@ -1753,13 +1777,15 @@ int CCIFSCliSocket::SetFileTime(const char *s, CTime t) {
       Send(buf,len+4);
       if(readResponseSMB2(buf,512)) {   // 152
         rsh=(SMB2_HEADER*)buf;
-        {SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+        {SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
         
+				memcpy(guid,scr->FileGUID,16);		// 
+
         sh=(SMB2_HEADER*)(buf+4);
         prepareSMB2header(sh,SMB2_COM_SETINFO,1,1);
         si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
         si->Size.size=0x21;
-        si->Class=1;
+        si->Class=SMB2_FS_FILE_INFO;
         si->InfoLevel=SMB2_FILE_BASIC_INFO;
         si->InfoSize=sizeof(SMB2_FILEBASICINFO) /*0x40*/;
         si->InfoOffset=0x0060;
@@ -1808,6 +1834,7 @@ int CCIFSCliSocket::Attrib(const char *s,uint8_t attrAnd,uint8_t attrOr) {
       prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
       scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
       scf->Size.size=0x39;
+			scf->SecurityFlags=0;
       scf->Oplock=SMB2_OPLOCK_LEVEL_NONE;
       scf->Impersonation=2;
       scf->Flags=0;
@@ -1832,8 +1859,9 @@ int CCIFSCliSocket::Attrib(const char *s,uint8_t attrAnd,uint8_t attrOr) {
       prepareSMBcode(buf,NBSS_SESSION_MESSAGE,len);
       Send(buf,len+4);
       if(readResponseSMB2(buf,512)) {   // 152
-        SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+        SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
         rsh=(SMB2_HEADER*)buf;
+				memcpy(guid,scr->FileGUID,16);		// 
         
 // VERIFICARE!
 				sh=(SMB2_HEADER*)(buf+4);
@@ -1841,7 +1869,6 @@ int CCIFSCliSocket::Attrib(const char *s,uint8_t attrAnd,uint8_t attrOr) {
 				sgi=(SMB2_GETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 				sgi->Size.size=0x29;
 				sgi->Class=SMB2_FS_FILE_INFO;
-        si->InfoSize=sizeof(SMB2_FILEBASICINFO) /*0x40*/;
 				sgi->MaxSize=24;
 				sgi->InputOffset=0x68;
 				sgi->Reserved=0;
@@ -1863,7 +1890,7 @@ int CCIFSCliSocket::Attrib(const char *s,uint8_t attrAnd,uint8_t attrOr) {
 					prepareSMB2header(sh,SMB2_COM_SETINFO,1,1);
 					si=(SMB2_SETINFO*)(buf+sizeof(SMB2_HEADER)+4);
 					si->Size.size=0x21;
-					si->Class=1;
+					si->Class=SMB2_FS_FILE_INFO;
 					si->InfoLevel=SMB2_FILE_BASIC_INFO;
 					si->InfoSize=sizeof(SMB2_FILEBASICINFO) /*0x40*/;
 					si->InfoOffset=0x0060;
@@ -1918,7 +1945,7 @@ int CCIFSCliSocket::CloseSession() {
 				;
 			rsh=(SMB2_HEADER*)buf;
 
-			SMB2_ENDSESSION_RESPONSE;		// usare...
+			SMB2_CLOSESESSION_RESPONSE;		// usare...
 
 			}
 		sessionid=0;
@@ -1948,6 +1975,7 @@ int CCIFSCliSocket::GetVolumeInfo(char *d,CTime *t) {
 			prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
+			scf->SecurityFlags=0;
 			scf->Oplock=SMB2_OPLOCK_LEVEL_LEASE;
 			scf->Impersonation=2;
 			scf->Flags=0;
@@ -1973,7 +2001,7 @@ int CCIFSCliSocket::GetVolumeInfo(char *d,CTime *t) {
 			if(!readResponseSMB2(buf,1024))			// 152
 				goto errore;
 			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 			memcpy(guid,scr->FileGUID,16);		// FINIRE!
 			}
 
@@ -2067,6 +2095,7 @@ int CCIFSCliSocket::VolumeInfo(uint64_t *totalSectors,uint64_t *freeSectors,uint
 			prepareSMB2header(sh,SMB2_COM_CREATE,1,1);
 			scf=(SMB2_CREATEFILE*)(buf+sizeof(SMB2_HEADER)+4);
 			scf->Size.size=0x39;
+			scf->SecurityFlags=0;
 			scf->Oplock=SMB2_OPLOCK_LEVEL_LEASE;
 			scf->Impersonation=2;
 			scf->Flags=0;
@@ -2092,7 +2121,7 @@ int CCIFSCliSocket::VolumeInfo(uint64_t *totalSectors,uint64_t *freeSectors,uint
 			if(!readResponseSMB2(buf,1024))			// 152
 				goto errore;
 			rsh=(SMB2_HEADER*)buf;
-			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER)+   8);
+			{SMB2_CREATE_RESPONSE *scr=(SMB2_CREATE_RESPONSE*)(buf+sizeof(SMB2_HEADER));
 			memcpy(guid,scr->FileGUID,16);		// FINIRE!
 			}
 
@@ -2285,6 +2314,7 @@ uint64_t CCIFSCliSocket::TimeToFiletime(CTime value) {
 
 // ---------------------------------------------------------------------------------------------------------------
 CCIFSSrvSocket::CCIFSSrvSocket(UINT nPort,CTestsocketApp *p) {
+
 	version=2;
 	port=nPort;
 	}
@@ -2294,6 +2324,7 @@ CCIFSSrvSocket::~CCIFSSrvSocket() {
 
 BOOL CCIFSSrvSocket::Create() {
 
+//	CCIFSSrvSocket2::gettime();
 	return CSocket::Create(port);
 	}
 
@@ -2341,7 +2372,7 @@ void CCIFSSrvSocket::doDelete(CCIFSSrvSocket2 *ss) {
 
 
 void CCIFSSrvSocket2::OnReceive(int nErr) {
-	char myBuf[1024],myBuf1[512],*s;
+	char myBuf[4096],myBuf1[512],*s;
 	int i,n;
 	DWORD len,type;
 	NBSS_HEADER nbsh;
@@ -2354,52 +2385,934 @@ void CCIFSSrvSocket2::OnReceive(int nErr) {
 		i=Receive(&sh,sizeof(SMB2_HEADER));		// ossia len  FINIRE!
 		}
 	else {
-		SMB2_HEADER sh;
-		i=Receive(&sh,sizeof(SMB2_HEADER));		// ossia len
+		SMB2_HEADER *sh;
 
-		switch(sh.Command) {
+		len=htonl(len);
+		i=Receive(myBuf,len /*sizeof(SMB2_HEADER)*/);		// ossia len
+		sh=(SMB2_HEADER*)((char*)myBuf);
+
+		if(sessionid && sessionid != sh->SessionID)
+			goto errore_sid;
+		if(treeid && treeid != sh->TreeID)
+			goto errore_tid;
+		if(processid && processid != sh->ProcessID)
+			goto errore_pid;
+
+		switch(sh->Command) {
 			case SMB2_COM_NEGOTIATE:
+				{
+				SMB2_NEGOTIATE_PROTOCOL *snp;
+				SMB2_NEGOTIATE_RESPONSE *snr;
+//				i=Receive(&myBuf,i /*sizeof(SMB2_NEGOTIATE_PROTOCOL)*/);
+				snp=(SMB2_NEGOTIATE_PROTOCOL*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(snp->Size.size != 0x24)
+					goto errore_size;
+				n=snp->DialectCount;
+				processid=sh->ProcessID;
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+				prepareSMB2header(sh,SMB2_COM_NEGOTIATE,STATUS_OK,sessionid,1,1);
+
+				snr=(SMB2_NEGOTIATE_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+				snr->Size.dynamicPart=1;  snr->Size.fixedPart=32;
+				snr->Security=SMB2_FLAG_SIGNING;
+				snr->Dialect=0x210;
+				snr->Capabilities=SMB2_NEGOTIATE_DFS | SMB2_NEGOTIATE_LEASING;
+				snr->NegotiateContextcount=0;
+				getGUID(serverguid);
+				memcpy(snr->ServerGUID,serverguid,16);
+				snr->MaxTransactionSize=65536;
+				snr->MaxReadSize=65536;
+				snr->MaxWriteSize=65536;
+				snr->CurrentTime=gettime();
+				snr->BootTime=gettime()-(((uint64_t)timeGetTime())*10000);
+				snr->BlobOffset=0x80;
+				snr->BlobLength=42;
+				snr->NegotiateContextoffset=0x53534d4c;		//LMSS
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_NEGOTIATE_RESPONSE)-sizeof(snr->Blob)+snr->BlobLength);
+				Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_NEGOTIATE_RESPONSE)-sizeof(snr->Blob)+snr->BlobLength);
+				}
 				break;
 			case SMB2_COM_OPENSESSION:
+				switch(sessionstate) {
+					SMB2_OPEN_SESSION *sos;
+					SMB2_OPENSESSION_RESPONSE *sosr;
+					case 0:
+						if(sh->SessionID==sessionid)
+							;
+
+		//				i=Receive(&myBuf,i /*sizeof(SMB2_OPEN_SESSION)*/);
+						sos=(SMB2_OPEN_SESSION*)((char*)myBuf+sizeof(SMB2_HEADER));
+						if(sos->Size.size != 0x19)
+							goto errore_size;
+
+						msgcntR=sh->MessageID;
+						msgcntS=msgcntR;
+						sh=(SMB2_HEADER*)((char*)myBuf+4);
+						prepareSMB2header(sh,SMB2_COM_OPENSESSION,STATUS_MORE_PROCESSING_REQUIRED,
+							rand() | ((uint32_t)rand() << 16),1,32);
+
+						sosr=(SMB2_OPENSESSION_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+						sosr->Size.dynamicPart=1;		sosr->Size.fixedPart=8;
+						sosr->Flags=0;
+						sosr->BlobOffset=0x48;
+						sosr->BlobLength=179;
+						*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_OPENSESSION_RESPONSE)-sizeof(sosr->Blob)+sosr->BlobLength);
+						Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_OPENSESSION_RESPONSE)-sizeof(sosr->Blob)+sosr->BlobLength);
+						sessionstate++;
+						break;
+					case 1:
+		//				i=Receive(&myBuf,i /*sizeof(SMB2_OPEN_SESSION)*/);
+						sos=(SMB2_OPEN_SESSION*)((char*)myBuf+sizeof(SMB2_HEADER));
+						sessionid=sh->SessionID;
+						if(sos->Size.size != 0x19)
+							goto errore_size;
+
+						msgcntR=sh->MessageID;
+						msgcntS=msgcntR;
+						sh=(SMB2_HEADER*)((char*)myBuf+4);
+						prepareSMB2header(sh,SMB2_COM_OPENSESSION,STATUS_OK,sessionid,1,1);
+
+						sosr=(SMB2_OPENSESSION_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+						sosr->Size.dynamicPart=1;		sosr->Size.fixedPart=8;
+						sosr->Flags=0;
+						sosr->BlobOffset=0x48;
+						sosr->BlobLength=29;
+						*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_OPENSESSION_RESPONSE)-sizeof(sosr->Blob)+sosr->BlobLength);
+						Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_OPENSESSION_RESPONSE)-sizeof(sosr->Blob)+sosr->BlobLength);
+
+						sessionstate++;
+						break;
+					}
 				break;
 			case SMB2_COM_ENDSESSION:
+				{
+				SMB2_CLOSE_SESSION *scs;
+				SMB2_CLOSESESSION_RESPONSE *scsr;
+//				i=Receive(&myBuf,sizeof(SMB2_CLOSE_SESSION));
+				scs=(SMB2_CLOSE_SESSION*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(scs->Size.size != 0x4)
+					goto errore_size;
+
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+				prepareSMB2header(sh,SMB2_COM_ENDSESSION,STATUS_OK,sessionid,1,1);
+
+				scsr=(SMB2_CLOSESESSION_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+				scsr->Size.dynamicPart=0;		scsr->Size.fixedPart=2;
+				scsr->Reserved=0;
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_CLOSESESSION_RESPONSE));
+				Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_CLOSESESSION_RESPONSE));
+
+				sessionstate=0;
+				}
 				break;
 			case SMB2_COM_TREECONNECT:
+				{
+				SMB2_TREE_CONNECT *stc;
+				SMB2_TREE_CONNECT_RESPONSE *stcr;
+				uint8_t *p;
+				char nome[256],*p2;
+				CFileFind finder;
+				char realPath[512];
+				int n;
+
+//				i=Receive(&myBuf,sizeof(SMB2_FIND));
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+
+//				i=Receive(&myBuf,sizeof(SMB2_TREE_CONNECT));
+				stc=(SMB2_TREE_CONNECT*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(stc->Size.size != 0x9)
+					goto errore_size;
+
+				p=(uint8_t*)myBuf+stc->BlobOffset;
+				CCIFSCliSocket::uniDecode(p,stc->BlobLength,nome);
+				p2=strrchr(nome,'\\');
+				if(p2)
+					/* p2++ */;		// vado in root cmq
+				else			// beh NON deve accadere!
+					p2=nome;
+
+//				AfxMessageBox(p2);
+
+				strcpy(curtree,p2);
+				strcat(p2,"\\*.*");
+//				AfxMessageBox(p2);
+				BOOL bWorking = finder.FindFile(p2);
+				n=0;
+				if(bWorking) {
+					bWorking = finder.FindNextFile();
+					if(bWorking) {
+//						AfxMessageBox(finder.GetFileName());
+						n=1;
+						}
+					}
+				if(!n)
+					*curtree=0;
+				finder.Close();
+
+				treeid=rand();		// VERIFICARE! o mettere un progressivo su finder
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+				prepareSMB2header(sh,SMB2_COM_TREECONNECT,n ? STATUS_OK : STATUS_NO_SUCH_FILE,sessionid,1,1);
+
+				stcr=(SMB2_TREE_CONNECT_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+				stcr->Size.dynamicPart=0;		stcr->Size.fixedPart=8;
+/* per IPC$				stcr->Type=SMB2_TREE_NAMEDPIPE;	//named pipe
+				stcr->Reserved=0;
+				stcr->Flags=0x00000030;
+				stcr->Capabilities=0x00000000;
+				stcr->AccessMask=0x011f01ff;*/
+				stcr->Type=SMB2_TREE_PHYSICALDISK;		// physical disk
+				stcr->Reserved=0;
+				stcr->Flags=0x00000000;
+				stcr->Capabilities=0x00000000;
+				stcr->AccessMask=0x001200a9;
+
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_TREE_CONNECT_RESPONSE));
+				Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_TREE_CONNECT_RESPONSE));
+				}
 				break;
 			case SMB2_COM_TREEDISCONNECT:
+				{
+				SMB2_TREE_DISCONNECT *std;
+				SMB2_TREEDISCONNECT_RESPONSE *stdr;
+//				i=Receive(&myBuf,sizeof(SMB2_TREE_DISCONNECT));
+				std=(SMB2_TREE_DISCONNECT*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(std->Size.size != 0x4)
+					goto errore_size;
+
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+				prepareSMB2header(sh,SMB2_COM_TREEDISCONNECT,STATUS_OK,sessionid,1,1);
+
+				stdr=(SMB2_TREEDISCONNECT_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+				stdr->Size.dynamicPart=0;		stdr->Size.fixedPart=2;
+				stdr->Reserved=0;
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_TREEDISCONNECT_RESPONSE));
+				Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_TREEDISCONNECT_RESPONSE));
+
+				*curtree=0;
+				treeid=0;
+				}
 				break;
 			case SMB2_COM_CREATE:
+				{
+				SMB2_CREATEFILE *scf;
+				SMB2_CREATE_RESPONSE *scr;
+				char nomefile[256],nometemp[512];
+				uint8_t *p;
+				int i;
+				CFileStatus fs;
+				char myguid[16];
+
+//				i=Receive(&myBuf,sizeof(SMB2_CREATEFILE));
+				scf=(SMB2_CREATEFILE*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(scf->Size.size != 0x39)
+					goto errore_size;
+
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+
+				createflags=scf->Flags;
+				createoptions=scf->CreateOptions;
+				p=(uint8_t*)myBuf+scf->BlobFilenameOffset;
+
+/*				CString S;
+				S.Format(scf->BlobFilenameOffset);
+				AfxMessageBox(S);*/
+				if(scf->BlobFilenameLength)
+					CCIFSCliSocket::uniDecode(p,scf->BlobFilenameLength,nomefile);
+				else
+					*nomefile=0;
+
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+
+				scr=(SMB2_CREATE_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+				scr->Size.dynamicPart=1;		scr->Size.fixedPart=44;		// OCCHIO è variabile a seconda del tipo di create!
+
+				strcpy(nometemp,curtree);
+				strcat(nometemp,"\\");
+				strcat(nometemp,nomefile);
+
+//				AfxMessageBox(nometemp);
+				/*CString S;
+				S.Format("%08x %08x",createoptions,scf->AccessMask);
+				AfxMessageBox(S);*/
+				getGUID(myguid);
+				if(*nomefile) {
+					i=0;
+					if(createoptions & SMB2_OPTION_DIRECTORY) {
+						strcpy(curdir,nomefile);
+						i=mkdir(nometemp);
+						memcpy(dirguid,myguid,16);
+						}
+					else {
+						CFileException e;
+						strcpy(curfile,nomefile);
+						if(scf->AccessMask & SMB2_ACCESS_READ) {
+							i=file.Open(nometemp,CFile::modeRead     | CFile::shareDenyWrite);
+							scr->Action=i ? 1 : 0;			// 
+							}
+						else if(scf->AccessMask & SMB2_ACCESS_WRITE) {
+							i=file.Open(nometemp,CFile::modeWrite | CFile::modeCreate    | CFile::shareDenyNone);
+//					AfxMessageBox(e.m_cause);
+							scr->Action=i ? 2 : 0;			// FINIRE con create opp no
+							}
+						memcpy(fileguid,myguid,16);
+						}
+
+					file.GetStatus(fs);
+					scr->Attrib=fs.m_attribute;
+					scr->EOFSize=file.GetLength();
+					scr->FileSize=file.GetLength();
+					scr->AccessTime=gettime(fs.m_atime);
+					scr->CreateTime=gettime(fs.m_ctime);
+					scr->ModifiedTime=gettime(fs.m_mtime);
+					scr->WriteTime=gettime(fs.m_mtime);
+					}
+				else {
+					i=2;		// casi speciali con Blob...
+					}
+
+				scr->Oplock=scf->Oplock;	// sembra, quasi
+				scr->Flags=0;		//finire
+				if(i != 1) {
+					scr->Attrib=0;
+					scr->EOFSize=0;
+					scr->FileSize=0;
+					scr->AccessTime=0;
+					scr->CreateTime=0;
+					scr->ModifiedTime=0;
+					scr->WriteTime=0;
+					}
+				scr->Reserved=0;
+				scr->BlobLength=0;
+				scr->BlobOffset=0;
+				memcpy(scr->FileGUID,myguid,16);
+
+				prepareSMB2header(sh,SMB2_COM_CREATE,i ? STATUS_OK : STATUS_OBJECT_NAME_NOT_FOUND,sessionid,1,1);
+
+//				AfxMessageBox(nometemp);
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_CREATE_RESPONSE)-sizeof(scr->Blob)+scr->BlobLength);
+				Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_CREATE_RESPONSE)-sizeof(scr->Blob)+scr->BlobLength);
+				}
 				break;
 			case SMB2_COM_CLOSE:
+				{
+				SMB2_CLOSEFILE *scs;
+				SMB2_CLOSE_RESPONSE *scsr;
+
+//				i=Receive(&myBuf,sizeof(SMB2_CLOSEFILE));
+				scs=(SMB2_CLOSEFILE*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(scs->Size.size != 0x18)
+					goto errore_size;
+
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+
+				scsr=(SMB2_CLOSE_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+				scsr->Size.dynamicPart=0;		scsr->Size.fixedPart=30;
+				if(*curfile) {
+					CFileStatus fs;
+					file.GetStatus(fs);
+					scsr->Attrib=fs.m_attribute;
+					scsr->EOFSize=file.GetLength();
+					scsr->FileSize=file.GetLength();
+					scsr->AccessTime=gettime(fs.m_atime);
+					scsr->CreationTime=gettime(fs.m_ctime);
+					scsr->ModifiedTime=gettime(fs.m_mtime);
+					scsr->WriteTime=gettime(fs.m_mtime);
+					file.Close();
+					}
+				else {
+					scsr->AccessTime=0;
+					scsr->CreationTime=0;
+					scsr->ModifiedTime=0;
+					scsr->WriteTime=0;
+					scsr->Reserved=0;
+					scsr->EOFSize=0;
+					scsr->FileSize=0;
+					scsr->Attrib=0;
+					scsr->Flags=0;
+					}
+				if(createoptions & SMB2_OPTION_DELETEONCLOSE)
+					CFile::Remove(curfile);
+
+				prepareSMB2header(sh,SMB2_COM_CLOSE,STATUS_OK,sessionid,1,1);
+
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_CLOSE_RESPONSE));
+				Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_CLOSE_RESPONSE));
+
+				*curfile=0;		// occhio se le cose si sovrappongono
+				createflags=0;
+				createoptions=0;
+				}
 				break;
 			case SMB2_COM_FLUSH:
+				{
+				}
 				break;
 			case SMB2_COM_READ:
+				{
+				SMB2_READFILE *srf;
+				SMB2_READ_RESPONSE *srr;
+				uint8_t buf[65536];			// v. max Transaction ecc
+
+//				i=Receive(&myBuf,sizeof(SMB2_READFILE));
+				srf=(SMB2_READFILE*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(srf->Size.size != 0x31)
+					goto errore_size;
+				if(memcmp(srf->FileGUID,fileguid,16))
+					goto errore_guid;
+
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+				sh=(SMB2_HEADER*)((char*)buf+4);
+				prepareSMB2header(sh,SMB2_COM_READ,STATUS_OK,sessionid,1,1);
+
+				srr=(SMB2_READ_RESPONSE*)((char*)buf+4+sizeof(SMB2_HEADER));
+				srr->Size.dynamicPart=1;		srr->Size.fixedPart=8;
+				file.Seek(srf->Offset,CFile::begin);
+				srr->BlobOffset=0x50;
+				srr->BlobLength=file.Read((char*)buf+4+srr->BlobOffset,srf->Length);		// v. sopra
+				fileoffset=file.Seek(0,CFile::current);
+
+				*(DWORD*)buf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_READ_RESPONSE)-sizeof(srr->Blob)+srr->BlobLength);
+				Send(buf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_READ_RESPONSE)-sizeof(srr->Blob)+srr->BlobLength);
+				}
 				break;
 			case SMB2_COM_WRITE:
+				{
+				SMB2_WRITEFILE *swf;
+				SMB2_WRITE_RESPONSE *swr;
+//				i=Receive(&myBuf,sizeof(SMB2_WRITEFILE));
+				swf=(SMB2_WRITEFILE*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(swf->Size.size != 0x31)
+					goto errore_size;
+				if(memcmp(swf->FileGUID,fileguid,16))
+					goto errore_guid;
+
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+				prepareSMB2header(sh,SMB2_COM_WRITE,STATUS_OK,sessionid,1,1);
+
+				swr=(SMB2_WRITE_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+				swr->Size.dynamicPart=1;		swr->Size.fixedPart=8;
+				/*CString S;
+				S.Format("%08x %08x",swf->Offset,swf->Length);
+				AfxMessageBox(S);*/
+				file.Seek(swf->Offset,CFile::begin);
+				file.Write(swf->Blob,swf->Length);		// 
+				swr->Count=swf->Length;
+				fileoffset=file.Seek(0,CFile::current);
+
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_WRITE_RESPONSE));
+				Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_WRITE_RESPONSE));
+				}
 				break;
 			case SMB2_COM_LOCK:
 				break;
 			case SMB2_COM_IOCTL:
+				{
+				SMB2_IOCTL *si;
+				SMB2_IOCTL_RESPONSE *sir;
+//				i=Receive(&myBuf,sizeof(SMB2_WRITEFILE));
+				si=(SMB2_IOCTL*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(si->Size.size != 0x31)
+					goto errore_size;
+
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+				prepareSMB2header(sh,SMB2_COM_IOCTL,STATUS_OK,sessionid,1,1);
+
+				sir=(SMB2_IOCTL_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+				sir->Size.dynamicPart=1;		sir->Size.fixedPart=8;		// FINIRE!
+
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_IOCTL_RESPONSE));
+				Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_IOCTL_RESPONSE));
+				}
 				break;
 			case SMB2_COM_CANCEL:
 				break;
 			case SMB2_COM_KEEPALIVE:
 				break;
 			case SMB2_COM_FIND:
+				{
+				SMB2_FIND *sf;
+				SMB2_FIND_RESPONSE *sfr;
+				SMB2_FIND_RESPONSE_INFO1 *sfri1;
+				SMB2_FIND_RESPONSE_INFO2 *sfri2;
+				SMB2_FIND_RESPONSE_INFO3 *sfri3;
+				SMB2_FIND_RESPONSE_INFO4 *sfri4;
+				SMB2_FIND_RESPONSE_INFO5 *sfri5;
+				SMB2_FIND_RESPONSE_INFO6 *sfri6;
+				CFileFind finder;
+				char realPath[512],mask[256],*p2;
+				uint8_t *p;
+				uint8_t buf[65536];			// v. MaxTransactionSize cmq
+				uint32_t bufsize;
+				int i,n;
+				uint32_t flags;
+
+//				i=Receive(&myBuf,sizeof(SMB2_FIND));
+				sf=(SMB2_FIND*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(sf->Size.size != 0x21)
+					goto errore_size;
+
+				msgcntR=sh->MessageID;
+				flags=sh->Flags;		// se SMB2_FLAG_CHAINED è un comando identico a quello prima... v. FIND in certi casi tipo la DIR da dos...
+				msgcntS=msgcntR;
+
+				p=(uint8_t*)myBuf+sf->BlobOffset;
+				CCIFSCliSocket::uniDecode(p,sf->BlobLength,mask);
+
+//				AfxMessageBox(p2);
+
+				strcpy(realPath,curtree);
+				strcat(realPath,curdir);
+				strcat(realPath,"\\");
+				strcat(realPath,"*.*");
+//				strcat(p2,mask);
+
+//				AfxMessageBox(realPath);
+
+				BOOL bWorking = finder.FindFile(realPath);
+				n=0;
+				bufsize=0;
+				while(bWorking) {
+					CTime t;
+					uint32_t ofs;
+
+					bWorking = finder.FindNextFile();
+
+					sfri1=(SMB2_FIND_RESPONSE_INFO1*)((char*)buf+4+sizeof(SMB2_HEADER)+sizeof(SMB2_FIND_RESPONSE)-8-sizeof(sfr->Blob)+bufsize);
+					sfri2=(SMB2_FIND_RESPONSE_INFO2*)sfri1;
+					sfri3=(SMB2_FIND_RESPONSE_INFO3*)sfri1;
+					sfri4=(SMB2_FIND_RESPONSE_INFO4*)sfri1;
+					sfri5=(SMB2_FIND_RESPONSE_INFO5*)sfri1;
+					sfri6=(SMB2_FIND_RESPONSE_INFO6*)sfri1;
+
+					switch(sf->InfoLevel) {
+						case FileNamesInformation:
+							CCIFSCliSocket::uniEncode(finder.GetFileName(),(uint8_t*)sfri6->FileName);
+							sfri6->FilenameLength=strlen(finder.GetFileName())*2;
+							break;
+						case FileFullDirectoryInformation:
+							CCIFSCliSocket::uniEncode(finder.GetFileName(),(uint8_t*)sfri2->FileName);
+							sfri2->FilenameLength=strlen(finder.GetFileName())*2;
+							break;
+						case FileIdFullDirectoryInformation:
+							CCIFSCliSocket::uniEncode(finder.GetFileName(),(uint8_t*)sfri3->FileName);
+							sfri3->FilenameLength=strlen(finder.GetFileName())*2;
+							break;
+						case FileBothDirectoryInformation:
+							CCIFSCliSocket::uniEncode(finder.GetFileName(),(uint8_t*)sfri4->FileName);
+							sfri4->FilenameLength=strlen(finder.GetFileName())*2;
+							break;
+						case FileInformationClass_Reserved:
+							break;
+						default:
+							CCIFSCliSocket::uniEncode(finder.GetFileName(),(uint8_t*)sfri1->FileName);
+							sfri1->FilenameLength=strlen(finder.GetFileName())*2;
+							break;
+						}
+					switch(sf->InfoLevel) {
+						case FileNamesInformation:
+							break;
+						case FileInformationClass_Reserved:
+							break;
+						default:
+							sfri1->Attrib=finder.IsHidden() ? 2 : 0 |
+								finder.IsArchived() ? 8 : 0 |
+								finder.IsCompressed() ? 16 : 0 |        
+								finder.IsReadOnly() ? 1 : 0 |
+								finder.IsSystem() ? 4 : 0 |
+								finder.IsTemporary() ? 32 : 0 |
+								finder.IsDots() ? 64 : 0 |
+								finder.IsDirectory() ? 128 : 0;
+							sfri1->EOFSize=finder.GetLength();
+							finder.GetCreationTime(t);
+							sfri1->CreationTime=gettime(t);
+							finder.GetLastWriteTime(t);
+							sfri1->WriteTime=gettime(t);
+							sfri1->ModifiedTime=gettime(t);
+							finder.GetLastAccessTime(t);
+							sfri1->AccessTime=gettime(t);
+							break;
+						}
+					switch(sf->InfoLevel) {
+						case FileBothDirectoryInformation:
+						case FileIdBothDirectoryInformation:
+						case FileIdAllExtdBothDirectoryInformation:
+							CCIFSCliSocket::uniEncode("",sfri4->ShortFileName);		// fare!
+							sfri4->ShortNameLength=0;
+							break;
+						case FileInformationClass_Reserved:
+							break;
+						default:
+							break;
+						}
+
+					switch(sf->InfoLevel) {
+						case FileFullDirectoryInformation:
+						case FileIdFullDirectoryInformation:
+						case FileBothDirectoryInformation:
+						case FileIdBothDirectoryInformation:
+							sfri2->EASize=0;		// trovare
+							break;
+						case FileInformationClass_Reserved:
+							break;
+						default:
+							break;
+						}
+					switch(sf->InfoLevel) {
+						case FileIdBothDirectoryInformation:
+							sfri5->Reserved2=0;
+						case FileIdFullDirectoryInformation:
+							sfri3->Reserved=0;
+							//sfri3->FileID;
+							break;
+						case FileIdExtdDirectoryInformation:
+							//sfri->reparsePoint
+							break;
+						case FileId64ExtdDirectoryInformation:
+						case FileId64ExtdBothDirectoryInformation:
+//							sfri->ID64;
+							break;
+						case FileIdAllExtdDirectoryInformation:
+						case FileIdAllExtdBothDirectoryInformation:
+//							sfri->ID128;
+							break;
+						case FileInformationClass_Reserved:
+							break;
+						}
+					sfri1->FileIndex=n;
+					switch(sf->InfoLevel) {
+						case FileDirectoryInformation:
+							ofs=sizeof(SMB2_FIND_RESPONSE_INFO1)-sizeof(sfri1->FileName)+sfri1->FilenameLength;
+							i=STATUS_OK;
+							break;
+						case FileFullDirectoryInformation:
+							ofs=sizeof(SMB2_FIND_RESPONSE_INFO2)-sizeof(sfri2->FileName)+sfri2->FilenameLength;
+							i=STATUS_OK;
+							break;
+						case FileIdFullDirectoryInformation:
+							ofs=sizeof(SMB2_FIND_RESPONSE_INFO3)-sizeof(sfri3->FileName)+sfri3->FilenameLength;
+							i=STATUS_OK;
+							break;
+						case FileBothDirectoryInformation:
+							ofs=sizeof(SMB2_FIND_RESPONSE_INFO4)-sizeof(sfri4->FileName)+sfri4->FilenameLength;
+							i=STATUS_OK;
+							break;
+						case FileIdBothDirectoryInformation:
+							ofs=sizeof(SMB2_FIND_RESPONSE_INFO5)-sizeof(sfri5->FileName)+sfri5->FilenameLength;
+							i=STATUS_OK;
+							break;
+						case FileNamesInformation:
+							ofs=sizeof(SMB2_FIND_RESPONSE_INFO6)-sizeof(sfri6->FileName)+sfri6->FilenameLength;
+							i=STATUS_OK;
+							break;
+						case FileIdExtdDirectoryInformation:
+						case FileId64ExtdDirectoryInformation:
+						case FileId64ExtdBothDirectoryInformation:
+						case FileIdAllExtdDirectoryInformation:
+						case FileIdAllExtdBothDirectoryInformation:
+						case FileInformationClass_Reserved:
+							i=STATUS_INVALID_INFO_CLASS;
+							bWorking=FALSE;		// direi :)
+							break;
+						}
+					ofs = (ofs+7) & 0xfffffff8;		// pad 8 byte
+					bufsize += ofs;
+					sfri1->NextOffset=ofs;
+
+					n++;
+					}
+				sfri1->NextOffset=0;
+				finder.Close();
+
+				sh=(SMB2_HEADER*)((char*)buf+4);
+				prepareSMB2header(sh,SMB2_COM_FIND,i,sessionid,1,1);
+				sfr=(SMB2_FIND_RESPONSE*)((char*)buf+4+sizeof(SMB2_HEADER));
+				sfr->Size.dynamicPart=1;		sfr->Size.fixedPart=4;
+				sfr->BlobOffset=0x00000048;
+				sfr->BlobLength=bufsize;
+
+				*(DWORD*)buf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_FIND_RESPONSE)-8-sizeof(sfr->Blob)+bufsize);
+				Send(buf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_FIND_RESPONSE)-8-sizeof(sfr->Blob)+bufsize);
+
+				if(flags & SMB2_FLAG_CHAINED) {		// verificare come e quando...
+					sh=(SMB2_HEADER*)((char*)myBuf+4);
+					prepareSMB2header(sh,SMB2_COM_FIND,STATUS_NO_MORE_FILES,sessionid,1,1);
+					sfr=(SMB2_FIND_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+					sfr->Size.dynamicPart=1;		sfr->Size.fixedPart=4;
+					sfr->BlobOffset=0;
+					sfr->BlobLength=0;
+
+					*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_FIND_RESPONSE)-sizeof(sfr->Blob)+sfr->BlobLength);
+					Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_FIND_RESPONSE)-sizeof(sfr->Blob)+sfr->BlobLength);
+					}
+				}
 				break;
 			case SMB2_COM_NOTIFY:
+				{
+				}
 				break;
 			case SMB2_COM_GETINFO:
+				{
+				SMB2_GETINFO *sgi;
+				SMB2_GETINFO_RESPONSE *sgr;
+//				i=Receive(&myBuf,sizeof(SMB2_GETINFO ));
+				sgi=(SMB2_GETINFO*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(sgi->Size.size != 0x29)
+					goto errore_size;
+
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+
+				sgr=(SMB2_GETINFO_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+
+				/*CString S;
+				S.Format("%08x %08x",sgi->Class,sgi->InfoLevel);
+				AfxMessageBox(S);*/
+				switch(sgi->Class) {
+					case SMB2_FS_FILE_INFO:
+						break;
+					case SMB2_FS_INFO:
+						break;
+					case SMB2_SEC_INFO:
+						break;
+					}
+				switch(sgi->InfoLevel) {
+					case SMB2_SEC_INFO_00:
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=20;
+						sgr->BlobLength=0;
+						sgr->BlobOffset=0;
+						break;
+					case SMB2_FILE_FS_VOLUME_INFO:
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
+						sgr->BlobOffset=0x0048;
+						{
+						SMB2_FILEVOLUMEINFO *sfvi=(SMB2_FILEVOLUMEINFO*)((char*)myBuf+4+sgr->BlobOffset);
+						CTime t(1985,1,1,14,8,0);
+						CCIFSCliSocket::uniEncode("frocius",sfvi->Label);
+						sfvi->LabelLength=7*2;
+						sfvi->CreateTime=gettime(t);
+						sfvi->Reserved=0;
+						sfvi->SerialNumber=MAKELONG(0/*VERNUML*/,1/*VERNUMH*/);
+						sgr->BlobLength=18+sfvi->LabelLength;
+						}
+						break;
+					case SMB2_FILE_FS_SIZE_INFO:
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
+						sgr->BlobLength=0;
+						sgr->BlobOffset=0;
+						break;
+					case SMB2_FILE_BASIC_INFO:		// verificare
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
+						sgr->BlobLength=sizeof(SMB2_FILEBASICINFO);
+						sgr->BlobOffset=0x0048;
+						{
+						SMB2_FILEBASICINFO *sfbi=(SMB2_FILEBASICINFO*)((char*)myBuf+4+sgr->BlobOffset);
+						sfbi->AccessTime=0;
+						sfbi->Attrib=0;
+						sfbi->FileSize=0;
+						sfbi->ModifiedTime=0;
+						sfbi->Unknown=0;
+						sfbi->WriteTime=0;
+						}
+						break;
+					case SMB2_FILE_STANDARD_INFO:
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=20;
+						sgr->BlobOffset=0x0048;
+						{
+			      SMB2_FILEFSINFO *sffi=(SMB2_FILEFSINFO*)((char*)myBuf+4+sgr->BlobOffset);
+						CCIFSCliSocket::uniEncode("FAT",sffi->Label);
+						sffi->Attrib=0;		// case-sensitive, LFN, compression, quotas, OID, ACL, Encrypt...
+						sffi->LabelLength=3*2;
+						sffi->MaxLabelLength=3*2;
+						sgr->BlobLength=12+sffi->LabelLength;
+						}
+						break;
+					case SMB2_FILE_FULL_INFO:
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
+						sgr->BlobLength=sizeof(SMB2_FILEVOLUMESIZEINFO);
+						sgr->BlobOffset=0x0048;
+						{
+						SMB2_FILEVOLUMESIZEINFO *sfvsi=(SMB2_FILEVOLUMESIZEINFO*)((char*)myBuf+4+sgr->BlobOffset);
+						sfvsi->ActualFreeUnits=100;		// o AllocSize??
+						sfvsi->CallerFreeUnits=101;
+						sfvsi->SectorsSize=512;
+						sfvsi->AllocSize=1;
+						sfvsi->SectorsPerUnit=1;
+						}
+						break;
+					case SMB2_FILE_OID_INFO:
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
+						sgr->BlobLength=0;
+						sgr->BlobOffset=0;
+						break;
+					case SMB2_FILE_RENAME_INFO:
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
+						sgr->BlobLength=0;
+						sgr->BlobOffset=0;
+						break;
+					case SMB2_FILE_DISPOSITION_INFO:
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
+						sgr->BlobLength=0;
+						sgr->BlobOffset=0;
+						break;
+					case SMB2_FILE_ALLOCATION_INFO:
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
+						sgr->BlobLength=0;
+						sgr->BlobOffset=0;
+						break;
+					case SMB2_FILE_NETWORK_OPEN_INFO:
+						sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
+						sgr->BlobLength=0;
+						sgr->BlobOffset=0;
+						{
+						SMB2_NETWORKOPENINFO *snoi=(SMB2_NETWORKOPENINFO*)((char*)myBuf+4+sgr->BlobOffset);
+						}
+						break;
+					}
+
+				prepareSMB2header(sh,SMB2_COM_GETINFO,STATUS_OK,sessionid,1,1);
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_GETINFO_RESPONSE)-sizeof(sgr->Blob)+sgr->BlobLength);
+				Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_GETINFO_RESPONSE)-sizeof(sgr->Blob)+sgr->BlobLength);
+				}
 				break;
 			case SMB2_COM_SETINFO:
+				{
+				SMB2_SETINFO *ssi;
+				SMB2_SETINFO_RESPONSE *ssr;
+				char nometemp[256],nometemp2[256];
+//				i=Receive(&myBuf,sizeof(SMB2_SETINFO));
+				ssi=(SMB2_SETINFO*)((char*)myBuf+sizeof(SMB2_HEADER));
+				if(ssi->Size.size != 0x21)
+					goto errore_size;
+
+				msgcntR=sh->MessageID;
+				msgcntS=msgcntR;
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+
+				ssr=(SMB2_SETINFO_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+
+				/*CString S;
+				S.Format("%08x %08x",ssi->Class,ssi->InfoLevel);
+				AfxMessageBox(S);*/
+				switch(ssi->Class) {
+					case SMB2_FS_FILE_INFO:
+						break;
+					case SMB2_FS_INFO:
+						break;
+					case SMB2_SEC_INFO:
+						break;
+					}
+				switch(ssi->InfoLevel) {
+					case SMB2_SEC_INFO_00:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=20;
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					case SMB2_FILE_FS_VOLUME_INFO:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=4;
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					case SMB2_FILE_FS_SIZE_INFO:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=4;
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					case SMB2_FILE_BASIC_INFO:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=4;
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					case SMB2_FILE_STANDARD_INFO:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=20;
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					case SMB2_FILE_FULL_INFO:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=4;
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					case SMB2_FILE_OID_INFO:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=4;
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					case SMB2_FILE_RENAME_INFO:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=4;
+						{
+						SMB2_FILERENAMEINFO *sfri=(SMB2_FILERENAMEINFO*)((char*)myBuf+4+ssi->InfoOffset);
+
+						strcpy(nometemp,curtree);
+						strcat(nometemp,"\\");
+						strcat(nometemp,curfile);
+						CCIFSCliSocket::uniDecode((uint8_t*)sfri->Blob,sfri->FilenameLength,nometemp2);		//
+						i=1;
+						try {
+							CFile::Rename(nometemp,nometemp2);
+							}
+						catch (CFileException* pEx) {
+							i=0;
+							}
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						}
+						break;
+					case SMB2_FILE_DISPOSITION_INFO:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=4;
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					case SMB2_FILE_ENDOFFILE_INFO:
+						ssr->Size.dynamicPart=0;		ssr->Size.fixedPart=1;
+						file.Seek((uint32_t)*(uint64_t*)((char*)myBuf+ssi->InfoOffset),CFile::current);		// mah verificare
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					case SMB2_FILE_ALLOCATION_INFO:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=4;
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					case SMB2_FILE_NETWORK_OPEN_INFO:
+						ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=4;
+						ssr->BlobLength=0;
+						ssr->BlobOffset=0;
+						break;
+					}
+
+				prepareSMB2header(sh,SMB2_COM_SETINFO,i ? STATUS_OK : STATUS_OBJECT_NAME_NOT_FOUND,sessionid,1,1);
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_SETINFO_RESPONSE)-sizeof(ssr->Blob)+ssr->BlobLength);
+				Send(myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_SETINFO_RESPONSE)-sizeof(ssr->Blob)+ssr->BlobLength);
+				}
 				break;
 			case SMB2_COM_BREAK:
 				break;
 			}
 		}
 
-
+errore_sid:
+errore_tid:
+errore_pid:
+errore_size:
+errore_guid:
+		;
 	}
 
 void CCIFSSrvSocket2::OnClose(int nErr) {
@@ -2408,8 +3321,72 @@ void CCIFSSrvSocket2::OnClose(int nErr) {
 	m_Parent->doDelete(this);
 	}
 
+void CCIFSSrvSocket2::getGUID(uint8_t *p) {
+	int8_t i;
 
-CCIFSSrvSocket2::CCIFSSrvSocket2(CCIFSSrvSocket *p) {
+	for(i=0; i<16; i++)
+		p[i]=rand();
+	}
+
+uint64_t CCIFSSrvSocket2::gettime(CTime t) {
+	uint64_t n=FILETIME_EPOCH_VALUE;
+	uint32_t t2=*(DWORD*)&t;
+
+	if(!t2)
+		t2=*(DWORD*)&CTime::GetCurrentTime();
+	n+=((uint64_t)t2)*10000000UL;
+
+	return n;
+	}
+
+
+
+SMB2_HEADER *CCIFSSrvSocket2::prepareSMB2header(SMB2_HEADER *sh,uint32_t command,uint32_t status,uint32_t session,
+																								uint8_t ccharge,uint16_t crequest) {
+
+	sh->Protocol[0]=0xFE;
+	sh->Protocol[1]='S';
+	sh->Protocol[2]='M';
+	sh->Protocol[3]='B';
+	sh->Size=64;
+	sh->CreditCharge=ccharge;
+	sh->Status=status;
+	sh->Command=command;			// 
+	sh->CreditsRequested=crequest;
+	sh->Flags=SMB2_FLAG_RESPONSE;
+	sh->ChainOffset=0;
+	sh->MessageID=msgcntS;
+	sh->ProcessID=processid;
+	sh->TreeID=treeid;
+	sh->SessionID=session;
+	ZeroMemory(sh->Signature,sizeof(sh->Signature));
+
+	return sh;
+	}
+
+
+
+CCIFSSrvSocket2::CCIFSSrvSocket2(CCIFSSrvSocket *p) : m_Parent(p) {
+
+	msgcntS=msgcntR=0;
+	dialect=0;		// 
+	processid=0;
+	sessionid=0;
+	treeid=0;
+	security=0;
+	ZeroMemory(&fileguid,16);
+	ZeroMemory(&dirguid,16);
+	fileoffset=0;
+	createflags=0;
+	createoptions=0;
+	accessmask=0;
+	shareaccess=0;
+	fileattributes=0;
+	*curfile=0;
+	*curdir=0;
+	*curtree=0;
+
+	sessionstate=0;
 	}
 
 CCIFSSrvSocket2::~CCIFSSrvSocket2() {
