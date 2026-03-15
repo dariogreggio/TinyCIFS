@@ -320,6 +320,7 @@ enum {
 #define SMB2_FILE_RENAME_INFO 0xA
 #define SMB2_FILE_DISPOSITION_INFO 0xD
 #define SMB2_FILE_ALLOCATION_INFO 0x13
+#define SMB2_FILE_ENDOFFILE_INFO 0x14
 #define SMB2_FILE_NETWORK_OPEN_INFO 0x22
 
 enum {
@@ -377,9 +378,9 @@ typedef struct __attribute__((__packed__)) {
 	UCHAR FileGUID[16];
 	ULONG Channel;
 	ULONG RemainingBytes;
+	USHORT BlobOffset;
+	USHORT BlobLength;
 	ULONG Flags;
-	ULONG BlobOffset;
-	ULONG BlobLength;
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
 	} SMB2_WRITEFILE;
 
@@ -485,6 +486,7 @@ typedef struct __attribute__((__packed__)) {
 	uint64_t ModifiedTime;
 	uint64_t Size;
 	uint64_t EOFSize;
+	ULONG Attrib;
 	ULONG Reserved;
   } SMB2_NETWORKOPENINFO;
 
@@ -507,7 +509,6 @@ typedef struct __attribute__((__packed__)) {
 	} SMB2_SETINFO;
 
 #define SMB2_SETINFO_DELETEONCLOSE 1
-#define SMB2_FILE_ENDOFFILE_INFO 0x14
 
 
 typedef struct __attribute__((__packed__)) {
@@ -562,7 +563,7 @@ typedef struct __attribute__((__packed__)) {
 		USHORT size;
 		} Size;
 	USHORT Reserved;
-  } SMB2_ENDSESSION_RESPONSE;
+  } SMB2_CLOSESESSION_RESPONSE;
 
 typedef struct __attribute__((__packed__)) {
 	union __attribute__((__packed__)) {
@@ -605,7 +606,50 @@ typedef struct __attribute__((__packed__)) {
 	UCHAR Blob[  256];		// v. SMB2_FIND_RESPONSE_INFO
   } SMB2_FIND_RESPONSE;
 
-typedef struct __attribute__((__packed__)) {
+typedef struct {
+	ULONG NextOffset;
+	ULONG FileIndex;
+	uint64_t CreationTime;
+	uint64_t AccessTime;
+	uint64_t WriteTime;
+	uint64_t ModifiedTime;
+	uint64_t EOFSize;
+	uint64_t Size;
+	ULONG Attrib;
+	ULONG FilenameLength;
+	uint8_t FileName[  256];		// 
+  } SMB2_FIND_RESPONSE_INFO1;		// FileDirectoryInformation
+typedef struct {
+	ULONG NextOffset;
+	ULONG FileIndex;
+	uint64_t CreationTime;
+	uint64_t AccessTime;
+	uint64_t WriteTime;
+	uint64_t ModifiedTime;
+	uint64_t EOFSize;
+	uint64_t Size;
+	ULONG Attrib;
+	ULONG FilenameLength;
+	ULONG EASize;
+	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
+  } SMB2_FIND_RESPONSE_INFO2;		// FileFullDirectoryInformation
+typedef struct {
+	ULONG NextOffset;
+	ULONG FileIndex;
+	uint64_t CreationTime;
+	uint64_t AccessTime;
+	uint64_t WriteTime;
+	uint64_t ModifiedTime;
+	uint64_t EOFSize;
+	uint64_t Size;
+	ULONG Attrib;
+	ULONG FilenameLength;
+	ULONG EASize;
+	UCHAR Reserved;
+	uint64_t FileID;		// SOLO se richiesto! occhio al tipo richiesta, fare diverse struct...
+	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
+  } SMB2_FIND_RESPONSE_INFO3;		// FileIdFullDirectoryInformation
+typedef struct {
 	ULONG NextOffset;
 	ULONG FileIndex;
 	uint64_t CreationTime;
@@ -621,8 +665,52 @@ typedef struct __attribute__((__packed__)) {
 	UCHAR Reserved;
 	uint8_t ShortFileName[12*2];		// unicode; anche se richiesto, c'è SOLO se il nome lungo è > 12 char
 //	uint64_t FileID;		// SOLO se richiesto! occhio al tipo richiesta, fare diverse struct...
-	char FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
-  } SMB2_FIND_RESPONSE_INFO;		// sono 104byte + len(Filename) paddato a 8, ciascuna, v. NextOffset
+	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
+  } SMB2_FIND_RESPONSE_INFO4;		// FileBothDirectoryInformation; sono 104byte + len(Filename) paddato a 8, ciascuna, v. NextOffset
+typedef struct {
+	ULONG NextOffset;
+	ULONG FileIndex;
+	uint64_t CreationTime;
+	uint64_t AccessTime;
+	uint64_t WriteTime;
+	uint64_t ModifiedTime;
+	uint64_t EOFSize;
+	uint64_t Size;
+	ULONG Attrib;
+	ULONG FilenameLength;
+	ULONG EASize;
+	UCHAR ShortNameLength;
+	UCHAR Reserved;
+	uint8_t ShortFileName[12*2];		// unicode; anche se richiesto, c'è SOLO se il nome lungo è > 12 char
+	USHORT Reserved2;
+	uint64_t FileID;		// SOLO se richiesto! occhio al tipo richiesta, fare diverse struct...
+	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
+  } SMB2_FIND_RESPONSE_INFO5;		// FileIdBothDirectoryInformation
+typedef struct {
+	ULONG NextOffset;
+	ULONG FileIndex;
+	ULONG FilenameLength;
+	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
+  } SMB2_FIND_RESPONSE_INFO6;		// FileNamesInformation
+typedef struct {
+	ULONG NextOffset;
+	ULONG FileIndex;
+	uint64_t CreationTime;
+	uint64_t AccessTime;
+	uint64_t WriteTime;
+	uint64_t ModifiedTime;
+	uint64_t EOFSize;
+	uint64_t Size;
+	ULONG Attrib;
+	ULONG FilenameLength;
+	ULONG EASize;
+	UCHAR ShortNameLength;
+	UCHAR Reserved;
+	uint8_t ShortFileName[12*2];		// unicode; anche se richiesto, c'è SOLO se il nome lungo è > 12 char
+	USHORT Reserved2;
+	uint64_t FileID;		// SOLO se richiesto! occhio al tipo richiesta, fare diverse struct...
+	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
+  } SMB2_FIND_RESPONSE_INFO7;		// FileIdBothDirectoryInformation NON SI SA , Windows 7 non la supporta... idem FileId64ExtdDirectoryInformation e FileId64ExtdBothDirectoryInformation e FileIdAllExtdDirectoryInformation e FileIdAllExtdBothDirectoryInformation
 
 typedef struct __attribute__((__packed__)) {
 	union __attribute__((__packed__)) {
@@ -2090,7 +2178,7 @@ typedef struct __attribute__((__packed__)) _NETWORKDISK_STRUCT NETWORKDISK_STRUC
 	static uint8_t *CIFSprepareSMBcode(uint8_t *,uint8_t,uint32_t);
 	char *nbEncode(const char *,char *,BOOL mode);
 	uint8_t *uniEncode(const char *,uint8_t *);
-    char *uniDecode(const uint8_t *src,uint16_t len,char *dst);
+    char *uniDecode(const uint8_t *src,int16_t len,char *dst);
     uint32_t FiletimeToTime(uint64_t value);
     uint64_t TimeToFiletime(uint32_t value);
     FILETIMEPACKED FiletimeToPackedTime(uint64_t value);
