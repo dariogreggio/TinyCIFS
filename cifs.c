@@ -639,7 +639,7 @@ int8_t CIFSOpenShare(NETWORKDISK_STRUCT *cifs,const char *s) {
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_GETINFO,1,1);
 				sgi=(SMB2_GETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 				sgi->Size.size=0x29;
-				sgi->Class=SMB2_FS_FILE_INFO;
+				sgi->Class=SMB2_FILE_INFO;
 				sgi->InfoLevel=SMB2_FILE_STANDARD_INFO;		// 
 				sgi->MaxSize=24;
 				sgi->InputOffset=0x68;
@@ -1246,7 +1246,7 @@ int8_t CIFSRmDir(NETWORKDISK_STRUCT *cifs,const char *s) {
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
 			si=(SMB2_SETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 			si->Size.size=0x21;
-			si->Class=SMB2_FS_FILE_INFO;
+			si->Class=SMB2_FILE_INFO;
 			si->InfoLevel=SMB2_FILE_DISPOSITION_INFO;
 			si->InfoSize=1;
 			si->InfoOffset=0x0060;
@@ -1442,7 +1442,7 @@ int8_t CIFSWriteFile(NETWORKDISK_STRUCT *cifs,const uint8_t *data,uint32_t size)
 			// bah questo non penso che serva davvero, allora credo solo lo spazio
 			si=(SMB2_SETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 			si->Size.size=0x21;
-			si->Class=SMB2_FS_FILE_INFO;
+			si->Class=SMB2_FILE_INFO;
 			si->InfoLevel=SMB2_FILE_ENDOFFILE_INFO;
 			si->InfoSize=8;
 			si->InfoOffset=0x0060;
@@ -1585,7 +1585,7 @@ int8_t CIFSDeleteFile(NETWORKDISK_STRUCT *cifs,const char *s) {
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
 			si=(SMB2_SETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 			si->Size.size=0x21;
-			si->Class=SMB2_FS_FILE_INFO;
+			si->Class=SMB2_FILE_INFO;
 			si->InfoLevel=SMB2_FILE_DISPOSITION_INFO;
 			si->InfoSize=1;
 			si->InfoOffset=0x0060;
@@ -1677,7 +1677,7 @@ int8_t CIFSRenameFile(NETWORKDISK_STRUCT *cifs,const char *s,const char *d) {
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
 			si=(SMB2_SETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 			si->Size.size=0x21;
-			si->Class=SMB2_FS_FILE_INFO;
+			si->Class=SMB2_FILE_INFO;
 			si->InfoLevel=SMB2_FILE_RENAME_INFO;
 			si->InfoOffset=0x0060;
 			si->Reserved=0;
@@ -1809,8 +1809,8 @@ int8_t CIFSFileStat(NETWORKDISK_STRUCT *cifs,const char *s, struct FSstat *statb
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_GETINFO,1,1);
 				sgi=(SMB2_GETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 				sgi->Size.size=0x29;
-				sgi->Class=SMB2_FS_FILE_INFO;
-				sgi->InfoLevel=SMB2_FILE_FS_SIZE_INFO;		// 
+				sgi->Class=SMB2_FILE_INFO;
+				sgi->InfoLevel=SMB2_FILE_BASIC_INFO;		// 
 				sgi->MaxSize=24;
 				sgi->InputOffset=0x68;
 				sgi->Reserved=0;
@@ -1893,7 +1893,7 @@ int8_t CIFSSetFileTime(NETWORKDISK_STRUCT *cifs,const char *s, uint32_t t) {
         CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
         si=(SMB2_SETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
         si->Size.size=0x21;
-        si->Class=SMB2_FS_FILE_INFO;
+        si->Class=SMB2_FILE_INFO;
         si->InfoLevel=SMB2_FILE_BASIC_INFO;
         si->InfoSize=sizeof(SMB2_FILEBASICINFO) /*0x40*/;
         si->InfoOffset=0x0060;
@@ -1996,7 +1996,8 @@ int8_t CIFSAttrib(NETWORKDISK_STRUCT *cifs,const char *s,uint8_t attrAnd,uint8_t
 				CIFSprepareSMB2header(cifs,sh,SMB2_COM_GETINFO,1,1);
 				sgi=(SMB2_GETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 				sgi->Size.size=0x29;
-				sgi->Class=SMB2_FS_FILE_INFO;
+				sgi->Class=SMB2_FILE_INFO;
+        si->InfoLevel=SMB2_FILE_BASIC_INFO;
 				sgi->MaxSize=24;
 				sgi->InputOffset=0x68;
 				sgi->Reserved=0;
@@ -2018,7 +2019,7 @@ int8_t CIFSAttrib(NETWORKDISK_STRUCT *cifs,const char *s,uint8_t attrAnd,uint8_t
 					CIFSprepareSMB2header(cifs,sh,SMB2_COM_SETINFO,1,1);
 					si=(SMB2_SETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 					si->Size.size=0x21;
-					si->Class=SMB2_FS_FILE_INFO;
+					si->Class=SMB2_FILE_INFO;
 					si->InfoLevel=SMB2_FILE_BASIC_INFO;
 					si->InfoSize=sizeof(SMB2_FILEBASICINFO) /*0x40*/;
 					si->InfoOffset=0x0060;
@@ -2158,7 +2159,7 @@ int8_t CIFSGetVolumeInfo(NETWORKDISK_STRUCT *cifs,char *d,FILETIMEPACKED *t) {
 			sgi=(SMB2_GETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 			sgi->Size.size=0x29;
 			sgi->Class=SMB2_FS_INFO;
-			sgi->InfoLevel=SMB2_FILE_FS_VOLUME_INFO;		// 
+			sgi->InfoLevel=SMB2_FS_VOLUME_INFO;		// 
 			sgi->MaxSize=88;
 			sgi->InputOffset=0;
 			sgi->Reserved=0;
@@ -2184,7 +2185,7 @@ int8_t CIFSGetVolumeInfo(NETWORKDISK_STRUCT *cifs,char *d,FILETIMEPACKED *t) {
 			sgi=(SMB2_GETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 			sgi->Size.size=0x29;
 			sgi->Class=SMB2_FS_INFO;
-			sgi->InfoLevel=SMB2_FILE_STANDARD_INFO;		// 
+			sgi->InfoLevel=SMB2_FS_ATTRIBUTE_INFO;		// 
 			sgi->MaxSize=80;
 			sgi->InputOffset=0;
 			sgi->Reserved=0;
@@ -2280,7 +2281,7 @@ int8_t CIFSVolumeInfo(NETWORKDISK_STRUCT *cifs,uint64_t *totalSectors,uint64_t *
 			sgi=(SMB2_GETINFO*)((char*)buf+4+sizeof(SMB2_HEADER));
 			sgi->Size.size=0x29;
 			sgi->Class=SMB2_FS_INFO;
-			sgi->InfoLevel=SMB2_FILE_FULL_INFO;		// 
+			sgi->InfoLevel=SMB2_FS_FULL_SIZE_INFO;		// 
 			sgi->MaxSize=32;
 			sgi->InputOffset=68;
 			sgi->Reserved=0;

@@ -179,6 +179,9 @@ typedef struct __attribute__((__packed__)) {
 	USHORT BlobLength;
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
 	} SMB2_TREE_CONNECT;
+    
+#define SMB2_TREE_NAMEDPIPE 0x02
+#define SMB2_TREE_PHYSICALDISK 0x01
 
 typedef struct __attribute__((__packed__)) {
 	union __attribute__((__packed__)) {
@@ -307,21 +310,45 @@ enum {
 #define SMB2_FILE_OVERWRITE 0x00000004	//Overwrite the file if it already exists; otherwise, fail the operation. MUST NOT be used for a printer object.
 #define SMB2_FILE_OVERWRITE_IF 0x00000005		//Overwrite the file if it already exists; otherwise, create the file. This value SHOULD NOT be used for a printer object.<40>
 
-#define SMB2_SEC_INFO_00 0
-#define SMB2_FS_FILE_INFO 1
+#define SMB2_FILE_INFO 1
 #define SMB2_FS_INFO 2
+#define SMB2_SEC_INFO 3
 
-#define SMB2_FILE_FS_VOLUME_INFO 1
-#define SMB2_FILE_FS_SIZE_INFO 3
+// per SMB2_FS_FILE_INFO
 #define SMB2_FILE_BASIC_INFO 4
 #define SMB2_FILE_STANDARD_INFO 5		// ossia Attribute
-#define SMB2_FILE_FULL_INFO 7
-#define SMB2_FILE_OID_INFO 8
+#define SMB2_FILE_INTERNAL_INFO 6		// 
+#define SMB2_FILE_EA_INFO 7
+#define SMB2_FILE_ACCESS_INFO 8   
 #define SMB2_FILE_RENAME_INFO 0xA
 #define SMB2_FILE_DISPOSITION_INFO 0xD
+#define SMB2_FILE_POSITION_INFO 0xE
+#define SMB2_FILE_INFO_0F 0xF       // FULL_EA
+#define SMB2_FILE_MODE_INFO 0x10
+#define SMB2_FILE_ALIGNMENT_INFO 0x11
+#define SMB2_FILE_ALL_INFO 0x12
 #define SMB2_FILE_ALLOCATION_INFO 0x13
 #define SMB2_FILE_ENDOFFILE_INFO 0x14
+#define SMB2_FILE_ALTERNATE_NAME_INFO 0x15
+#define SMB2_FILE_STREAM_INFO 0x16
+#define SMB2_FILE_PIPE_INFO 0x17
+#define SMB2_FILE_COMPRESSION_INFO 0x1C
 #define SMB2_FILE_NETWORK_OPEN_INFO 0x22
+#define SMB2_FILE_ATTRIBUTE_TAG_INFO 0x23
+
+// per SMB2_FS_INFO
+#define SMB2_FS_VOLUME_INFO 1
+#define SMB2_FS_LABEL_INFO 2        // pare non supportato da windows...
+#define SMB2_FS_SIZE_INFO 3
+#define SMB2_FS_DEVICE_INFO 4
+#define SMB2_FS_ATTRIBUTE_INFO 5
+#define SMB2_FS_QUOTA_INFO 6		// 
+#define SMB2_FS_FULL_SIZE_INFO 7
+#define SMB2_FS_OID_INFO 8        // anche ACCESS__INFO
+
+// per SMB2_SEC_INFO
+#define SMB2_SEC_INFO_00 0
+    
 
 enum {
 	FileDirectoryInformation=0x01,		//Basic information of a file or directory. Basic information is defined as the file's name, time stamp, size and attributes. 
@@ -447,15 +474,15 @@ typedef struct __attribute__((__packed__)) {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
   } SMB2_FILERENAMEINFO;
 
-typedef struct {
-	uint64_t CreateTime;
+typedef struct __attribute__((__packed__)) {
 	uint64_t AccessTime;
 	uint64_t WriteTime;
 	uint64_t ModifiedTime;
+	uint64_t FileSize;
 	ULONG Attrib;
 	ULONG Unknown;		// ...wireshark
   } SMB2_FILEBASICINFO;
-  
+
 typedef struct {
 	uint64_t CreateTime;
 	ULONG SerialNumber;
@@ -2212,6 +2239,55 @@ typedef struct __attribute__((__packed__)) _NETWORKDISK_STRUCT NETWORKDISK_STRUC
 
     
 #define CIFS_TIMEOUT 2000      // 
+    
+#define MAX_CLIENT_CONNECTIONS 1
 
+	static void getGUID(uint8_t *);
+    static inline BOOL cmpGUID(uint8_t *,uint8_t *);
+	static uint64_t gettime();
+    static uint64_t PackedTimeToFiletime(FILETIMEPACKED);
+	SMB2_HEADER *prepareSMB2header(SMB2_HEADER *sh,uint32_t command,uint32_t status,uint32_t session,uint8_t ccharge,uint16_t crequest);
+    BOOL SMB2CreateServer();
+    BOOL SMB2CloseServer();
+    void SMB2OnReceive();
+
+    
+typedef struct __attribute__((__packed__)) _SMB2_SERVER_DATA {
+#ifdef USA_WIFI
+    SOCKET sock;
+#endif
+#ifdef USA_ETHERNET
+#endif
+	uint32_t msgcntS;       // ok 32bit qua!
+	uint32_t msgcntR;
+	uint16_t dialect;		// 
+	uint32_t processid;
+	uint64_t sessionid;
+	uint32_t treeid;
+	uint8_t security;
+	uint8_t serverguid[16];
+	uint8_t fileguid[16];
+	uint8_t dirguid[16];
+	uint32_t fileoffset;
+	uint8_t sessionstate;
+	uint64_t createflags;
+	uint32_t createoptions;
+	uint32_t accessmask;
+	uint32_t shareaccess;
+	uint32_t fileattributes;
+#ifdef SUPPORT_LFN
+#endif
+	char curtree[64];
+	char curfile[32];
+	char curdir[64];
+	FSFILE *file;
+	DWORD cliTimeOut;
+	uint32_t startConn;			// il momento di inizio connessione...
+   
+	int8_t maxConn;
+	uint16_t port;
+	uint8_t version;
+    } SMB2_SERVER_DATA;
+    
 #endif
 
