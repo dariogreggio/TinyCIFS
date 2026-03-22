@@ -103,6 +103,9 @@ typedef struct __attribute__((__packed__)) {
 // 10h..40h: priority
 #define SMB2_FLAG_DFSOP 0x10000000
 #define SMB2_FLAG_REPLAYOP 0x20000000
+    
+#define SMB2_FLAG_SIGNING_ENABLED 0x00000001
+#define SMB2_FLAG_SIGNING_REQUIRED 0x00000002
 
 
 typedef struct __attribute__((__packed__)) {
@@ -461,7 +464,7 @@ typedef struct __attribute__((__packed__)) {
 	USHORT InputOffset;
 	USHORT Reserved;
 	ULONG InputSize;
-	ULONG	AdditionalInfo;
+	ULONG AdditionalInfo;
 	ULONG Flags;
 	UCHAR FileGUID[16];
 	} SMB2_GETINFO;
@@ -482,6 +485,15 @@ typedef struct __attribute__((__packed__)) {
 	ULONG Attrib;
 	ULONG Unknown;		// ...wireshark
   } SMB2_FILEBASICINFO;
+
+typedef struct __attribute__((__packed__)) {
+	uint64_t AllocSize;
+	uint64_t EOFSize;
+	ULONG LinkCount;
+    uint8_t DeletePending;
+    uint8_t IsDirectory;
+	USHORT Unknown;		// ...wireshark
+  } SMB2_FILESTANDARDINFO;
 
 typedef struct {
 	uint64_t CreateTime;
@@ -504,7 +516,20 @@ typedef struct {
 	uint32_t MaxLabelLength;
 	uint32_t LabelLength;
 	UCHAR Label[  256];		// forse andrebbe dinamico..
-  } SMB2_FILEFSINFO;
+  } SMB2_FSINFO;
+  
+typedef struct {
+	uint32_t Type;
+	uint32_t Attributes;
+  } SMB2_FSDEVICEINFO;
+  
+typedef struct {
+	uint8_t boh[24];
+	uint64_t Threshold;
+	uint64_t Limit;
+	uint8_t Flags;
+	uint8_t boh2[7];
+  }   SMB2_FSQUOTAINFO;
   
 typedef struct __attribute__((__packed__)) {
 	uint64_t CreationTime;
@@ -628,8 +653,8 @@ typedef struct __attribute__((__packed__)) {
 		} Size;
 	USHORT BlobOffset;
 	ULONG BlobLength;
-	ULONG RemainingBytes;
-	ULONG Reserved;
+//	ULONG RemainingBytes; boh ma ci sono??
+//	ULONG Reserved;
 	UCHAR Blob[  256];		// v. SMB2_FIND_RESPONSE_INFO
   } SMB2_FIND_RESPONSE;
 
@@ -691,6 +716,7 @@ typedef struct {
 	UCHAR ShortNameLength;
 	UCHAR Reserved;
 	uint8_t ShortFileName[12*2];		// unicode; anche se richiesto, c'è SOLO se il nome lungo è > 12 char
+    // 94 byte fin qua
 //	uint64_t FileID;		// SOLO se richiesto! occhio al tipo richiesta, fare diverse struct...
 	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
   } SMB2_FIND_RESPONSE_INFO4;		// FileBothDirectoryInformation; sono 104byte + len(Filename) paddato a 8, ciascuna, v. NextOffset
@@ -894,6 +920,16 @@ typedef struct __attribute__((__packed__)) {
 
 
 typedef struct __attribute__((__packed__)) {
+    uint8_t boh[2];     // 60 28
+    uint8_t boh2[2];    // 06 06
+    uint8_t OID[6];     // SPNEGO 2b 06 01 05 05 02
+    uint8_t boh3[2];    // 06 0a
+    uint8_t mechType1[10];     // 2b 06 01 04 01 82 37 02 02 1e
+    uint8_t boh4[2];    // 06 0a
+    uint8_t mechType2[10];     // 2b 06 01 04 01 82 37 02 02 0a
+	} NEG_RESPONSE;
+    
+typedef struct __attribute__((__packed__)) {
 	uint8_t hdr[4];		// boh 60 48 06 06
 	uint8_t OID[6];		// boh SPNEGO 2b 06 01 05 05 02
 	uint8_t boh[2];			// boh a0 3e
@@ -956,7 +992,7 @@ typedef struct __attribute__((__packed__)) {
 	uint8_t negResult;	// 1 = incomplete
 	uint8_t boh[4];			// boh a2 7b 04 79
 	char id[8];				// NTLMSSP<0>
-	uint32_t messageType;		// 3=NTLMSSP_AUTH
+	uint32_t messageType;		// 3=NTLMSSP_AUTH; 2=CHALLENGE
 	uint16_t lenLMResponse;
 	uint16_t maxlenLMResponse;
 	uint32_t ofsLMResponse;
@@ -1001,7 +1037,47 @@ typedef struct __attribute__((__packed__)) {
 	} NEG_TOKEN_TARG3;		// in conferma dal server
 
 
+typedef struct __attribute__((__packed__)) {
+	uint8_t hdr[3];		// boh a1 81 b0
+	uint8_t hdr2[7];		// boh 30 81 ad a0 03 0a 01
+	uint8_t negResult;	// 1 = incomplete
+	uint8_t boh[4];			// boh a1 0c 06 0a
+	uint8_t supportedMech[10];		// 1.3.6.1.4.1.311.2.2.10 (NTLMSSP - Microsoft NTLM Security Support Provider)  2b 06 01 04 01 82 37 02 02 0a
+	uint8_t boh2[6];			// boh a2 81 97 04 81 94
+	char id[8];				// NTLMSSP<0>
+	uint32_t messageType;		// 2=NTLMSSP_CHALLENGE
+	uint16_t lenName;
+	uint16_t maxlenName;
+	uint32_t ofsName;
+	uint32_t negotiateFlags;		// e28a8a15 
+    uint64_t NTLMchallenge;
+	uint64_t reserved;
+	uint16_t lenInfo;
+	uint16_t maxlenInfo;
+	uint32_t ofsInfo;
+	uint8_t versionMaj;		// major[1], minor[1], build[2], NTLMrev[4]
+	uint8_t versionMin;
+	uint16_t versionBuild;
+	uint8_t versionUnused[3];
+	uint8_t versionNTLMrev;
+    uint8_t info[12];		// in effetti è dinamico basato v. lenInfo...
+	struct __attribute__((__packed__)) {
+		uint16_t type;
+		uint16_t length;
+		uint8_t name[12];		// in effetti è dinamico basato su length...
+		} attribute[6];
+	} SESS_TOKEN_TARG;			// FINIRE
 
+typedef struct __attribute__((__packed__)) {
+	uint8_t hdr[2];		// boh a1 1b
+	uint8_t hdr2[6];		// boh 30 19 a0 03 0a 01
+	uint8_t negResult;	// 0 = complete
+	uint8_t boh[4];		// boh a3 12 04 10 
+	uint32_t verifierVersionNumber;
+	uint8_t verifierBody[12];   // 23 61 4e e4 c4 ff 33 79 00 00 00 00
+	} SESS_TOKEN_TARG2;		// FINIRE
+
+    
 /* Negotiate Flags */
 #define NTLMSSP_NEGOTIATE_56                        (1U << 31)		//
 #define NTLMSSP_NEGOTIATE_KEY_EXCH                  (1U << 30)
@@ -1063,6 +1139,7 @@ typedef struct __attribute__((__packed__)) {
 #define NBSS_NEGATIVE_SESSION_RESPONSE 0x83
 
 
+    
 //Manager name Code Description Status Earliest dialect
 #define SMB_COM_CREATE_DIRECTORY 0x00			//(section 2.2.4.1)
 //SMBmkdir		Create a new directory.	D	
@@ -1294,6 +1371,13 @@ page 41 lists this range as "Reserved for proprietary dialects." X */
 //Negotiate protocol dialect. C
 //CORE
 
+    
+typedef struct __attribute__((__packed__)) {
+    UCHAR WordCount;
+    USHORT ByteCount;
+    UCHAR  Buffer[1 /*ByteCount*/];		// il primo byte è sempre 0x02 poi segue stringa char 0-term
+	} SMB_NEGOTIATE_PROTOCOL;
+    
 
 
 #define SMB2_COM_NEGOTIATE 0x0000		//
@@ -2253,24 +2337,19 @@ typedef struct __attribute__((__packed__)) _NETWORKDISK_STRUCT NETWORKDISK_STRUC
 
     
 typedef struct __attribute__((__packed__)) _SMB2_SERVER_DATA {
-#ifdef USA_WIFI
-    SOCKET sock;
-#endif
-#ifdef USA_ETHERNET
-#endif
 	uint32_t msgcntS;       // ok 32bit qua!
 	uint32_t msgcntR;
-	uint16_t dialect;		// 
 	uint32_t processid;
 	uint64_t sessionid;
 	uint32_t treeid;
-	uint8_t security;
+	uint16_t dialect;		// 
+	uint32_t fileoffset;
+	uint64_t createflags;
+	uint8_t signature[16];
 	uint8_t serverguid[16];
 	uint8_t fileguid[16];
 	uint8_t dirguid[16];
-	uint32_t fileoffset;
 	uint8_t sessionstate;
-	uint64_t createflags;
 	uint32_t createoptions;
 	uint32_t accessmask;
 	uint32_t shareaccess;
@@ -2284,10 +2363,14 @@ typedef struct __attribute__((__packed__)) _SMB2_SERVER_DATA {
 	DWORD cliTimeOut;
 	uint32_t startConn;			// il momento di inizio connessione...
    
-	int8_t maxConn;
 	uint16_t port;
+    SOCKET sock;
+	uint8_t security;
 	uint8_t version;
+	int8_t totConn;
     } SMB2_SERVER_DATA;
+
+BOOL advertizeNetbiosName(const char *);
     
 #endif
 

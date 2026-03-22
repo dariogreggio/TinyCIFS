@@ -314,6 +314,8 @@ int8_t CIFSOpenSession(NETWORKDISK_STRUCT *cifs,const char *s,const char *user,c
 				CIFSreadResponseNBSS(cifs,buf,4);
 				}
 
+			// dice che l'inizio negoziazione è SEMPRE SMB1! fare, v. server
+
 			sh=(SMB2_HEADER*)((char*)buf+4);
 			CIFSprepareSMB2header(cifs,sh,SMB2_COM_NEGOTIATE,1,31);
 			snp=(SMB2_NEGOTIATE_PROTOCOL*)((char*)buf+4+sizeof(SMB2_HEADER));
