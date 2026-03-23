@@ -2,6 +2,7 @@
 #include <string.h>
 #include <sys/endian.h>
 
+#include "compiler.h"
 #include "fsio.h"
 #include "cifs.h"
 #include "at_winc1500.h"
@@ -20,6 +21,7 @@ extern uint8_t rxBuffer[1536];
 extern WORD rxBufferLen;   //
 extern SOCKET TCPDataSocket,TCPDataSocket2;   // METTERE anche il 2 nella Struct
 extern SOCKET UDPclientSocket;
+extern Ipv4Addr myIp;
 extern BYTE SDcardOK;
 extern struct SAVED_PARAMETERS configParms;
 extern const char * const ASTERISKS,* const DOTDOTS,* const ROOTDIR;
@@ -53,6 +55,34 @@ char *uniDecode(const uint8_t *src,int16_t len,char *dst) {
 	*p=0;
 
 	return dst;
+	}
+
+char *nbEncode(const char *name,char *encoded_name,BOOL mode) {
+	char *p=encoded_name;
+	int8_t i=strlen(name),j;
+
+	*p++=0x20;
+	for(j=0; j<15; j++) {
+		if(j<i) {
+			*p++=(toupper(*name) >> 4) + 'A';
+			*p++=(toupper(*name) & 0xf) + 'A';
+			name++;
+			}
+		else {
+			*p++=(' ' >> 4) + 'A';
+			*p++=(' ' & 0xf) + 'A';
+			}
+		}
+	if(mode) {		// server
+		*p++=2+'A';
+		*p++=0+'A';
+		}
+	else {				// workstation
+		*p++=0+'A';
+		*p++=0+'A';
+		}
+	*p=0;		// dice che a volte c'è a volte no.. ma ok
+	return encoded_name;
 	}
 
 uint32_t FiletimeToTime(uint64_t value) {
@@ -188,6 +218,7 @@ void SMB2OnAccept() {
 //			j=Accept(*s);
 //			s->getPeer() ;
 			SMB2Server.startConn=now;		// o in NEGOTIATE?
+      setStatusLed(LED_NORMALE_CONNESSO_FTP);
 			return;
 		}
 
@@ -1620,6 +1651,8 @@ void OnClose() {
   SMB2Server.fileoffset=0;
 	memset(SMB2Server.signature,0,sizeof(SMB2Server.signature));
   
+  setStatusLed(LED_NORMALE_CONNESSO_WIFI);
+
 	}
 
 
@@ -1731,57 +1764,88 @@ enum {
 #define NCBNAMSZ 16
 #define LANANUM     3
   
-typedef struct _NCB {
-  UCHAR  ncb_command;
-  UCHAR  ncb_retcode;
-  UCHAR  ncb_lsn;
-  UCHAR  ncb_num;
-  uint8_t *ncb_buffer;
-  WORD   ncb_length;
-  UCHAR  ncb_callname[NCBNAMSZ];
-  UCHAR  ncb_name[NCBNAMSZ];
-  UCHAR  ncb_rto;
-  UCHAR  ncb_sto;
-//  void()(_NCB *)  * ncb_post;
-  UCHAR  ncb_lana_num;
-  UCHAR  ncb_cmd_cplt;
-#if 0   // ... boh cosa vuol dire?
-  UCHAR  ncb_reserve[18];
-#else
-  UCHAR  ncb_reserve[10];
-#endif
-//  HANDLE ncb_event;
-} NCB, *PNCB;
+typedef struct __attribute__((__packed__)) _NCB {
+  USHORT tid;   // 0x9385
+  union __attribute__((__packed__)) {
+    struct __attribute__((__packed__)) {
+      uint8_t unused:4;
+      uint8_t broadcast:1;
+      uint8_t unused2:3;
+      uint8_t recursion:1;
+      uint8_t truncated:1;
+      uint8_t unused3:1;
+      uint8_t opcode:4;
+      uint8_t response:1;   // invertire v.sotto
+      } flags;
+    uint16_t v;
+    };
+  USHORT questions;
+  USHORT answerRRs;
+  USHORT authorityRRs;
+  USHORT additionalRRs;
+  struct __attribute__((__packed__)) {
+    UCHAR  name[34];
+    uint16_t type;
+    uint16_t class;
+    } queries;
+  struct __attribute__((__packed__)) {
+    UCHAR boh;
+    UCHAR name;
+    USHORT type;
+    USHORT class;
+    uint32_t ttl;
+    USHORT length;
+    USHORT flags;
+    uint32_t address;
+    } additionalRecords;
+  } NCB, *PNCB;
 
 
 BOOL advertizeNetbiosName(const char *n) {
   NCB ncb;
-  int8_t i;
+  int i;
   struct sockaddr_in strAddr;
   
-  memset(&ncb, 0, sizeof (ncb));
-  ncb.ncb_command = NCBADDNAME;
-  ncb.ncb_lana_num = LANANUM;
+  memset(&ncb, 0, sizeof(ncb));
+  ncb.tid=htons(1);
+  ncb.flags.broadcast=1;
+  ncb.flags.recursion=0;
+  ncb.flags.truncated=0;
+  ncb.flags.opcode=5;   // 5=registration   0=name query
+  ncb.flags.response=0;
+  i=ncb.v;
+  ncb.v=htons(i);
+  ncb.questions=htons(1);
+  ncb.answerRRs=htons(0);
+  ncb.additionalRRs=htons(1);
+  nbEncode("WiFi_Pen",ncb.queries.name,FALSE);
+  ncb.queries.type=htons(32);   // NB
+  ncb.queries.class=htons(1);   // IN
+  ncb.additionalRecords.boh=0xc0;
+  ncb.additionalRecords.name=0x0c;   // boh...
+  ncb.additionalRecords.type=htons(32);   // NB
+  ncb.additionalRecords.class=htons(1);   // IN
+  ncb.additionalRecords.ttl=htonl(0x00e09304);   // 3 giorni 11 ore 20 minuti
+  ncb.additionalRecords.address=myIp.ip;
 
 // ovviamente sbagliato, quella usa una funzione "netbios()"  trovare e fare
   
-  i = strlen(n);
+/*  i = strlen(n);
   if(i > NCBNAMSZ)
     i = NCBNAMSZ;
   // Solving the trailing-space in 16-bytes storage if any
   // Firstly set all to ' ' char
   memset(&ncb.ncb_name,' ',NCBNAMSZ);
   // Then copy the string, leaving the ' ' chars
-  memcpy(&ncb.ncb_name,n,i);
+  memcpy(&ncb.ncb_name,n,i);*/
 
 	UDPclientSocket = socket(AF_INET,SOCK_DGRAM,0);
   if(UDPclientSocket >= 0) {
     strAddr.sin_family = AF_INET;
     strAddr.sin_port = htons(137);
     strAddr.sin_addr.s_addr = INADDR_BROADCAST;
-    connect(UDPclientSocket, (struct sockaddr*)&strAddr, sizeof(struct sockaddr_in));
-    // aspettare callback
-    send(UDPclientSocket,&ncb,sizeof(ncb),0);
+    sendto(UDPclientSocket,&ncb,110 /*sizeof(ncb)*/,0,&strAddr,sizeof(strAddr));
+    M2M_WAIT();
     close(UDPclientSocket);
     UDPclientSocket=INVALID_SOCKET;
     }
@@ -1789,5 +1853,5 @@ BOOL advertizeNetbiosName(const char *n) {
 /*  Netbios (&ncb);
   NBCheck (ncb);
 */
-  return (NRC_GOODRET == ncb.ncb_retcode);
+//  return (NRC_GOODRET == ncb.ncb_retcode);
   }
