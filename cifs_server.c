@@ -268,6 +268,7 @@ const char *NEGOTIATE_SECURITY_BLOB="\x60\x28"
 	"\x2b\x06\x01\x04\x01\x82\x37\x02\x02\x0a";		// OID mechtipe2
 const char *domainName="SKYNET";
 const char *computerName="SKYNET";
+const char *srvsvc="SRVSVC";
 
 const uint8_t OID_1_3_6_1_5_5_2[]={0x2b,0x06,0x01,0x05,0x05,0x02};		// OID inviati da server in risposta a Negotiate Protocol
 const uint8_t OID_1_3_6_1_4_1_311_2_2_30[]={0x2b,0x06,0x01,0x04,0x01,0x82,0x37,0x02,0x02,0x1e}; //OID mechtipe1
@@ -342,14 +343,16 @@ void SMB2OnReceive() {
         goto bad_protocol;
       }
 
-		if(SMB2Server.sessionid && SMB2Server.sessionid != sh->SessionID)
-			goto errore_sid;
-		if(SMB2Server.treeid && SMB2Server.treeid != sh->TreeID)
-			goto errore_tid;
-		if(SMB2Server.processid && SMB2Server.processid != sh->ProcessID)
-			goto errore_pid;
-//    if(memcmp(SMB2Server.signature,sh->Signature,sizeof(SMB2Server.signature))
-//      goto errore_sig;
+		if(sh->Command != SMB2_COM_KEEPALIVE) {		// questo arriva senza mai nulla! e idem esce senza mai nulla, v.
+      if(SMB2Server.sessionid && SMB2Server.sessionid != sh->SessionID)
+        goto errore_sid;
+      if(SMB2Server.treeid && SMB2Server.treeid != sh->TreeID)
+        goto errore_tid;
+      if(SMB2Server.processid && SMB2Server.processid != sh->ProcessID)
+        goto errore_pid;
+  //    if(memcmp(SMB2Server.signature,sh->Signature,sizeof(SMB2Server.signature))
+  //      goto errore_sig;
+      }
     
 		switch(sh->Command) {
 			case SMB2_COM_NEGOTIATE:
@@ -495,8 +498,11 @@ void SMB2OnReceive() {
 
 						SMB2Server.msgcntR=sh->MessageID;
 						SMB2Server.msgcntS=SMB2Server.msgcntR;
-            memcpy(&SMB2Server.signature,"\xda\x91\x7f\xdb\xa4\x4d\x87\x86\xca\xd7\x18\x4e\xcf\x53\x1a\xf3",sizeof(SMB2Server.signature));
-        memset(&SMB2Server.signature,0,sizeof(SMB2Server.signature));// SOLO se il flag in Header contiene SIGNED!
+            if(sh->Flags & SMB2_FLAG_SIGNING)
+//              memcpy(&SMB2Server.signature,"\xda\x91\x7f\xdb\xa4\x4d\x87\x86\xca\xd7\x18\x4e\xcf\x53\x1a\xf3",sizeof(SMB2Server.signature));
+              memcpy(&SMB2Server.signature,"\x01\x02\x03\x04\x00\x00\x00\x00\x05\x06\x07\x08\x00\x00\x00\x00",sizeof(SMB2Server.signature));
+            else
+              memset(&SMB2Server.signature,0,sizeof(SMB2Server.signature));// 
 						sh=(SMB2_HEADER*)((char*)myBuf+4);
 						prepareSMB2header(sh,SMB2_COM_OPENSESSION,STATUS_OK,SMB2Server.sessionid,1,1);
 // ev.            sh->Flags |= SMB2_FLAG_SIGNING;
@@ -557,8 +563,11 @@ void SMB2OnReceive() {
 				char nome[64],*p2;
 				SearchRec finder;
 //				char realPath[128];
-				int n;
+				int n=0;
 
+				if(SMB2Server.sessionid != sh->SessionID)
+					goto errore_sid2;
+        
 //				i=Receive(&myBuf,sizeof(SMB2_FIND));
 				SMB2Server.msgcntR=sh->MessageID;
 				SMB2Server.msgcntS=SMB2Server.msgcntR;
@@ -579,44 +588,45 @@ void SMB2OnReceive() {
 				else			// beh NON deve accadere!
 					p2=nome;
 
+				stcr=(SMB2_TREE_CONNECT_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+				stcr->Size.dynamicPart=0;		stcr->Size.fixedPart=8;
+
         FSchdir(ROOTDIR);
 				strcpy(SMB2Server.curtree,p2);
-        if(!stricmp(p2,"C$")) {
+        if(!stricmp(p2,"\\C$")) {
           // gestire!
           }
-        else if(!stricmp(p2,"IPC$")) {
+        else if(!stricmp(p2,"\\IPC$")) {
+          stcr->Type=SMB2_TREE_NAMEDPIPE;	//named pipe
+          stcr->Reserved=0;
+          stcr->Flags=0x00000030;
+          stcr->Capabilities=0x00000000;
+          stcr->AccessMask=0x011f01ff;
+          n=1;
           }
         else {
+  //				strcat(p2,"\\*.*");   ASTERISKS
+  //				BOOL bWorking = FindFirst("*.*" /*p2*/,ATTR_MASK,&finder) >= 0;
+          BOOL bWorking = FindFirst((char*)SMB2Server.curtree+1,ATTR_DIRECTORY,&finder) >= 0;   // salto "\"
+          n=bWorking;
+  /*				if(bWorking) {
+            bWorking = !FindNext(&finder);
+            if(bWorking) {
+              n=1;
+              }
+            }*/
+          stcr->Type=SMB2_TREE_PHYSICALDISK;		// physical disk
+          stcr->Reserved=0;
+          stcr->Flags=0x00000000;
+          stcr->Capabilities=0x00000000;
+          stcr->AccessMask=0x001200a9;
+  				if(!n)
+    				*SMB2Server.curtree=0;
           }
-//				strcat(p2,"\\*.*");   ASTERISKS
-//				BOOL bWorking = FindFirst("*.*" /*p2*/,ATTR_MASK,&finder) >= 0;
-				BOOL bWorking = FindFirst((char*)SMB2Server.curtree+1,ATTR_DIRECTORY,&finder) >= 0;   // salto "\"
-				n=bWorking;
-/*				if(bWorking) {
-					bWorking = !FindNext(&finder);
-					if(bWorking) {
-						n=1;
-						}
-					}*/
-				if(!n)
-					*SMB2Server.curtree=0;
 
 				SMB2Server.treeid=rand();		// VERIFICARE! o mettere un progressivo su finder
 				sh=(SMB2_HEADER*)((char*)myBuf+4);
 				prepareSMB2header(sh,SMB2_COM_TREECONNECT,n ? STATUS_OK : STATUS_NO_SUCH_FILE /*STATUS_OBJECT_NAME_NOT_FOUND*/,SMB2Server.sessionid,1,1);
-
-				stcr=(SMB2_TREE_CONNECT_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
-				stcr->Size.dynamicPart=0;		stcr->Size.fixedPart=8;
-/* per IPC$				stcr->Type=SMB2_TREE_NAMEDPIPE;	//named pipe
-				stcr->Reserved=0;
-				stcr->Flags=0x00000030;
-				stcr->Capabilities=0x00000000;
-				stcr->AccessMask=0x011f01ff;*/
-				stcr->Type=SMB2_TREE_PHYSICALDISK;		// physical disk
-				stcr->Reserved=0;
-				stcr->Flags=0x00000000;
-				stcr->Capabilities=0x00000000;
-				stcr->AccessMask=0x001200a9;
 
 				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_TREE_CONNECT_RESPONSE));
 				SMB2Send(myBuf);
@@ -656,6 +666,11 @@ void SMB2OnReceive() {
 				int i;
 				char myguid[16];
 
+				if(SMB2Server.sessionid != sh->SessionID)
+					goto errore_sid2;
+				if(SMB2Server.treeid != sh->TreeID)
+					goto errore_tid2;
+
 //				i=Receive(&myBuf,sizeof(SMB2_CREATEFILE));
 				scf=(SMB2_CREATEFILE*)((char*)rxBuffer+sizeof(SMB2_HEADER));
 				if(scf->Size.size != 0x39)
@@ -677,9 +692,7 @@ void SMB2OnReceive() {
 					*nomefile=0;
 
 				sh=(SMB2_HEADER*)((char*)myBuf+4);
-
 				scr=(SMB2_CREATE_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
-				scr->Size.dynamicPart=1;		scr->Size.fixedPart=44;		// OCCHIO è variabile a seconda del tipo di create!
 
 /*				strcpy(nometemp,SMB2Server.curtree);
 				strcat(nometemp,"\\"); 
@@ -691,43 +704,56 @@ void SMB2OnReceive() {
           FSchdir(SMB2Server.curdir);
 
         SetClockVarsNow();
-				getGUID(myguid);
+				if(!stricmp(nomefile,srvsvc)) {		// bah pare
+					memset(myguid,0,sizeof(myguid));
+					myguid[0]=myguid[8]=0x01;
+					myguid[12]=myguid[13]=myguid[14]=myguid[15]=0xff;
+					}
+				else
+					getGUID(myguid);
 				if(*nomefile) {
 					i=0;
 					if(SMB2Server.createoptions & SMB2_OPTION_DIRECTORY) {
 						strcpy(SMB2Server.curdir,nomefile);
-						i=FSmkdir(nomefile);
+						i=FSmkdir(nomefile) ? 1 : 0;
 						memcpy(SMB2Server.dirguid,myguid,16);
 						}
 					else {
-						strcpy(SMB2Server.curfile,nomefile);
-						if(scf->AccessMask & SMB2_ACCESS_READ) {
-							SMB2Server.file=FSfopen(nomefile,OPEN_READ,SHARE_READ /*    | shareDenyWrite*/);
-              i=SMB2Server.file != 0;
-							scr->Action=i ? 1 : 0;			// 
+						if(stricmp(nomefile,srvsvc)) {		
+  						strcpy(SMB2Server.curfile,nomefile);
+              if(scf->AccessMask & SMB2_ACCESS_READ) {
+                SMB2Server.file=FSfopen(nomefile,OPEN_READ,SHARE_READ /*    | shareDenyWrite*/);
+                i=SMB2Server.file != NULL ? 1 : 0;
+                scr->Action=i ? 1 : 0;			// 
+                }
+              else if(scf->AccessMask & SMB2_ACCESS_WRITE) {
+                SMB2Server.file=FSfopen(nomefile,OPEN_WRITE,SHARE_READWRITE /*| shareDenyNone*/);
+                i=SMB2Server.file != NULL ? 1 : 0;
+                scr->Action=i ? 2 : 0;			// FINIRE con create opp no
+                }
+              else if(scf->AccessMask & (SMB2_ACCESS_READATTRIBUTES | SMB2_ACCESS_WRITEATTRIBUTES | SMB2_ACCESS_DELETE)) {
+  //						else if((scf->AccessMask & 7) == 0) {		// FINIRE per casi come Rename e altro
+                i=2;
+                scr->Action=i ? 1 : 0;			// 
+                }
+              if(i==1) {
+                struct FSstat fs;
+                FSstat(SMB2Server.curfile,&fs);
+                scr->Attrib=fs.st_mode;
+                scr->EOFSize=fs.st_size;
+                scr->FileSize=fs.st_size;
+                scr->AccessTime=gettime(fs.st_atime);
+                scr->CreateTime=gettime(fs.st_ctime);
+                scr->ModifiedTime=gettime(fs.st_mtime);
+                scr->WriteTime=gettime(fs.st_mtime);
+                }
 							}
-						else if(scf->AccessMask & SMB2_ACCESS_WRITE) {
-							SMB2Server.file=FSfopen(nomefile,OPEN_WRITE,SHARE_READWRITE /*| shareDenyNone*/);
-              i=SMB2Server.file != 0;
-							scr->Action=i ? 2 : 0;			// FINIRE con create opp no
-							}
-						else if(scf->AccessMask & (SMB2_ACCESS_READATTRIBUTES | SMB2_ACCESS_WRITEATTRIBUTES | SMB2_ACCESS_DELETE)) {
-//						else if((scf->AccessMask & 7) == 0) {		// FINIRE per casi come Rename e altro
-              i=2;
-							scr->Action=i ? 1 : 0;			// 
+						else {
+							i=2;
 							}
 						memcpy(SMB2Server.fileguid,myguid,16);
 						}
 
-					struct FSstat fs;
-					FSstat(SMB2Server.curfile,&fs);
-					scr->Attrib=fs.st_mode;
-					scr->EOFSize=fs.st_size;
-					scr->FileSize=fs.st_size;
-					scr->AccessTime=gettime(fs.st_atime);
-					scr->CreateTime=gettime(fs.st_ctime);
-					scr->ModifiedTime=gettime(fs.st_mtime);
-					scr->WriteTime=gettime(fs.st_mtime);
 					}
 				else {
 					i=3;		// casi speciali con Blob...
@@ -737,13 +763,14 @@ void SMB2OnReceive() {
 				scr->Oplock=scf->Oplock;	// sembra, quasi
 				scr->Flags=0;		//finire
 				if(i != 1) {
-					scr->Attrib=0;
+					scr->Attrib=scf->CreateOptions & 1 ? ATTR_DIRECTORY : 0;    // patch se richiesta DIR...
 					scr->EOFSize=0;
 					scr->FileSize=0;
 					scr->AccessTime=0;
 					scr->CreateTime=0;
 					scr->ModifiedTime=0;
 					scr->WriteTime=0;
+          scr->Action=1;			// 
 					}
 				scr->Reserved=0;
 				scr->BlobLength=0;
@@ -751,6 +778,7 @@ void SMB2OnReceive() {
 				memcpy(scr->FileGUID,myguid,16);
 
 				prepareSMB2header(sh,SMB2_COM_CREATE,i ? STATUS_OK : STATUS_OBJECT_NAME_NOT_FOUND,SMB2Server.sessionid,1,1);
+				scr->Size.dynamicPart=1;		scr->Size.fixedPart=44;		// OCCHIO è variabile a seconda del tipo di create!
 
 				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_CREATE_RESPONSE)-sizeof(scr->Blob)+scr->BlobLength);
 				SMB2Send(myBuf);
@@ -772,17 +800,33 @@ void SMB2OnReceive() {
 
 				scsr=(SMB2_CLOSE_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
 				scsr->Size.dynamicPart=0;		scsr->Size.fixedPart=30;
-				if(*SMB2Server.curfile) {
+				if(SMB2Server.file) {
+          FSfclose(SMB2Server.file);  // gestire ev errore! in returncode
+          SMB2Server.file=NULL;
+          }
+				if(scs->Flags & SMB2_CLOSE_FLAG_POSTQUERY_ATTR) {
 					struct FSstat fs;
-					FSstat(SMB2Server.curfile,&fs);
-					scsr->Attrib=fs.st_mode;
-					scsr->EOFSize=fs.st_size;
-					scsr->FileSize=fs.st_size;
-					scsr->AccessTime=gettime(fs.st_atime);
-					scsr->CreationTime=gettime(fs.st_ctime);
-					scsr->ModifiedTime=gettime(fs.st_mtime);
-					scsr->WriteTime=gettime(fs.st_mtime);
-					FSfclose(SMB2Server.file);
+  				if(*SMB2Server.curfile) {
+            FSstat(SMB2Server.curfile,&fs);
+            scsr->Attrib=fs.st_mode;
+            scsr->EOFSize=fs.st_size;
+            scsr->FileSize=fs.st_size;
+            scsr->AccessTime=gettime(fs.st_atime);
+            scsr->CreationTime=gettime(fs.st_ctime);
+            scsr->ModifiedTime=gettime(fs.st_mtime);
+            scsr->WriteTime=gettime(fs.st_mtime);
+            }
+          else {
+            scsr->AccessTime=gettime(0) /*0*/;		// andrebbe messo qualcosa, se era il file "fittizio" per la Find...
+            scsr->CreationTime=0;
+            scsr->ModifiedTime=0;
+            scsr->WriteTime=0;
+            scsr->Reserved=0;
+            scsr->EOFSize=512;      // MEDIA_SECTOR_SIZE
+            scsr->FileSize=512;
+            scsr->Attrib=0;   // mettere ATTR_DIRECTORY se dir da Find
+            }
+					scsr->Flags=SMB2_CLOSE_FLAG_POSTQUERY_ATTR;
 					}
 				else {
 					scsr->AccessTime=0;
@@ -821,6 +865,11 @@ void SMB2OnReceive() {
         int n2;
 //				uint8_t buf[256 /*65536*/];			// v. max Transaction ecc
         
+				if(SMB2Server.sessionid != sh->SessionID)
+					goto errore_sid2;
+				if(SMB2Server.treeid != sh->TreeID)
+					goto errore_tid2;
+
 //				i=Receive(&myBuf,sizeof(SMB2_READFILE));
 				srf=(SMB2_READFILE*)((char*)rxBuffer+sizeof(SMB2_HEADER));
 				if(srf->Size.size != 0x31)
@@ -862,6 +911,12 @@ void SMB2OnReceive() {
 				{
 				SMB2_WRITEFILE *swf;
 				SMB2_WRITE_RESPONSE *swr;
+        
+				if(SMB2Server.sessionid != sh->SessionID)
+					goto errore_sid2;
+				if(SMB2Server.treeid != sh->TreeID)
+					goto errore_tid2;
+
 //				i=Receive(&myBuf,sizeof(SMB2_WRITEFILE));
 				swf=(SMB2_WRITEFILE*)((char*)rxBuffer+sizeof(SMB2_HEADER));
 				if(swf->Size.size != 0x31)
@@ -901,26 +956,153 @@ void SMB2OnReceive() {
 				{
 				SMB2_IOCTL *si;
 				SMB2_IOCTL_RESPONSE *sir;
-//				i=Receive(&myBuf,sizeof(SMB2_WRITEFILE));
+				int j;
+        
+				if(SMB2Server.sessionid != sh->SessionID)
+					goto errore_sid2;
+				if(SMB2Server.treeid != sh->TreeID)
+					goto errore_tid2;
+        
 				si=(SMB2_IOCTL*)((char*)rxBuffer+sizeof(SMB2_HEADER));
-				if(si->Size.size != 0x31)
+				if(si->Size.size != 0x39)
 					goto errore_size;
 
 				SMB2Server.msgcntR=sh->MessageID;
 				SMB2Server.msgcntS=SMB2Server.msgcntR;
-				sh=(SMB2_HEADER*)((char*)myBuf+4);
-				prepareSMB2header(sh,SMB2_COM_IOCTL,STATUS_OK,SMB2Server.sessionid,1,1);
 
 				sir=(SMB2_IOCTL_RESPONSE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
-				sir->Size.dynamicPart=1;		sir->Size.fixedPart=8;		// FINIRE!
+  			i=0;
+				switch(si->Function) {
+					case SMB2_FSCTL_PIPE_TRANSCEIVE:
+						switch(si->DCERPC.Type) {
+							case 11: //bind
+								sir->Function=si->Function;
+								memcpy(sir->GUID,si->GUID,sizeof(sir->GUID));
+								sir->Reserved=0;
+								sir->Flags=0x00000000;
+								sir->BlobInLength=0;		sir->BlobInOffset=0x70;
+								sir->BlobOutLength=68;		sir->BlobOutOffset=0x70;
+								sir->Reserved2=0;
+								sir->DCERPC.Version=5;		sir->DCERPC.VersionMinor=0;		// come si
+								sir->DCERPC.Type=12;			// bind_ack
+								sir->DCERPC.Flags=0;
+								sir->DCERPC.DataRepresentation=0x00000010;			// come si
+								sir->DCERPC.FragLength=68;		sir->DCERPC.AuthLength=0;
+								sir->DCERPC.CallID=0;
+								sir->DCERPC.MaxXmitFrag=sir->DCERPC.MaxRecvFrag=4280;
+								sir->DCERPC.AssocGroup=0x00003186;
+								sir->DCERPC.SecondaryAddrLen=13;
+								strcpy(sir->DCERPC.SecondaryAddr,"\\PIPE\\");
+								strcat(sir->DCERPC.SecondaryAddr,srvsvc);
+								sir->DCERPC.pad=0;
+								sir->DCERPC.NumCtxItems=1;		sir->DCERPC.pad2[0]=sir->DCERPC.pad2[1]=sir->DCERPC.pad2[2]=0;
+								sir->DCERPC.CtxItems[0].AckResult=0;		// 0=Acceptance
+								sir->DCERPC.CtxItems[0].pad=0;
+								memcpy(sir->DCERPC.CtxItems[0].TransferSyntax,"\x04\x5d\x88\x8a\xeb\x1c\xc9\x11\x9f\xe8\x08\x00\x2b\x10\x48\x60",sizeof(sir->DCERPC.CtxItems[0].TransferSyntax));
+								sir->DCERPC.CtxItems[0].SyntaxVer=2;
+								i=1;
+								j=116;
+								break;
+							case 0: //request
+								sir->Function=si->Function;
+								memcpy(sir->GUID,si->GUID,sizeof(sir->GUID));
+								j=254+	2+2+2;
+								sir->Reserved=0;
+								sir->Flags=0x00000000;
+								sir->BlobInLength=0;		sir->BlobInOffset=0x70;
+								sir->BlobOutLength=j   ;		sir->BlobOutOffset=0x70;
+								sir->Reserved2=0;
+								sir->SRVSVC.Version=5;		sir->SRVSVC.VersionMinor=0;		// come si
+								sir->SRVSVC.Type=2;			// response
+								sir->SRVSVC.Flags=3;
+								sir->SRVSVC.DataRepresentation=0x00000010;			// come si
+								sir->SRVSVC.FragLength=j    ;		sir->SRVSVC.AuthLength=0;
+								sir->SRVSVC.CallID=1;
+								sir->SRVSVC.AllocHint=j   -24;
+								sir->SRVSVC.ContextID=0;
+								sir->SRVSVC.CancelCount=0;
+								sir->SRVSVC.pad=0;
+								sir->SRVSVC.PtrToLevel=1;
+								sir->SRVSVC.CtrItems[0].Ctr=1;
+								sir->SRVSVC.CtrItems[0].ReferentID=0x00020000;
+								sir->SRVSVC.CtrItems[0].Count=3;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].ReferentID=0x00020004;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].MaxCount=3;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].Array[0].ReferentIDName=0x00020008;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].Array[0].Type=0 /*STYPE_DISKTREE*/ /*0x80000000 STYPE_DISKTREE_HIDDEN*/;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].Array[0].ReferentIDComment=0x0002000c;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].Array[1].ReferentIDName=0x00020010;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].Array[1].Type=0 /*STYPE_DISKTREE*/ /*0x80000000 STYPE_DISKTREE_HIDDEN*/;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].Array[1].ReferentIDComment=0x00020014;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].Array[2].ReferentIDName=0x00020018;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].Array[2].Type=3 /*STYPE_IPC_HIDDEN*/;
+								sir->SRVSVC.CtrItems[0].Ctr1Items[0].Array[2].ReferentIDComment=0x0002001c;
+								// OVVIAMENTE il tutto dev'essere dinamico!
+								uniEncode("Users",sir->SRVSVC.Name1);
+								sir->SRVSVC.Offset1=0;
+								sir->SRVSVC.Count1=sir->SRVSVC.MaxCount1=6;
+								uniEncode("Users share",sir->SRVSVC.Commento2);
+								sir->SRVSVC.Offset2=0;
+								sir->SRVSVC.Count2=sir->SRVSVC.MaxCount2=12;
+								uniEncode("test",sir->SRVSVC.Name3);
+								sir->SRVSVC.Offset3=0;
+								sir->SRVSVC.Count3=sir->SRVSVC.MaxCount3=5;
+								uniEncode("",sir->SRVSVC.Commento4);
+								sir->SRVSVC.Offset4=0;
+								sir->SRVSVC.Count4=sir->SRVSVC.MaxCount4=1;
+								uniEncode("IPC$",sir->SRVSVC.Name5);
+								sir->SRVSVC.Offset5=0;
+								sir->SRVSVC.Count5=sir->SRVSVC.MaxCount5=5;
+								uniEncode("Remote IPC",sir->SRVSVC.Commento6);
+								sir->SRVSVC.Offset6=0;
+								sir->SRVSVC.Count6=sir->SRVSVC.MaxCount6=11;
 
-				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_IOCTL_RESPONSE));
+								sir->SRVSVC.PtrToTotalEntries=0x0000;
+								sir->SRVSVC.TotalEntries=2;
+								sir->SRVSVC.ResumeHandleReferentID=0x00020050;
+								sir->SRVSVC.ResumeHandle=0;
+								sir->SRVSVC.WindowsError=0x00000000;
+								j+=48;
+								i=1;
+								break;
+							default:
+								i=0;
+								break;
+							}
+						break;
+					}
+        
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+				prepareSMB2header(sh,SMB2_COM_IOCTL,i ? STATUS_OK : STATUS_ILLEGAL_FUNCTION,SMB2Server.sessionid,1,1);
+        
+				sir->Size.dynamicPart=1;		sir->Size.fixedPart=24;		// FINIRE, verificare tutti casi!
+
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+j);
 				SMB2Send(myBuf);
 				}
 				break;
 			case SMB2_COM_CANCEL:
 				break;
 			case SMB2_COM_KEEPALIVE:
+				{
+				SMB2_KEEPALIVE *sk;
+				SMB2_KEEPALIVE *skr;
+				sk=(SMB2_KEEPALIVE*)((char*)rxBuffer+sizeof(SMB2_HEADER));
+				if(sk->Size.size != 0x4)
+					goto errore_size;
+
+				SMB2Server.msgcntR=sh->MessageID;
+				SMB2Server.msgcntS=SMB2Server.msgcntR;
+				sh=(SMB2_HEADER*)((char*)myBuf+4);
+				prepareSMB2header(sh,SMB2_COM_KEEPALIVE,STATUS_OK,0,1,1);
+
+				skr=(SMB2_KEEPALIVE*)((char*)myBuf+4+sizeof(SMB2_HEADER));
+				skr->Size.dynamicPart=0;		skr->Size.fixedPart=2;
+				skr->Flags=0;
+
+				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_KEEPALIVE));
+				SMB2Send(myBuf);
+				}
 				break;
 			case SMB2_COM_FIND:
 				{
@@ -940,6 +1122,11 @@ void SMB2OnReceive() {
 				uint16_t bufsize;
 				int8_t j;
 				uint32_t flags;
+
+				if(SMB2Server.sessionid != sh->SessionID)
+					goto errore_sid2;
+				if(SMB2Server.treeid != sh->TreeID)
+					goto errore_tid2;
 
 //				i=Receive(&myBuf,sizeof(SMB2_FIND));
 				sf=(SMB2_FIND*)((char*)rxBuffer+sizeof(SMB2_HEADER));
@@ -970,6 +1157,8 @@ void SMB2OnReceive() {
           FSchdir(SMB2Server.curdir);
 
         for(j=0; j<2; j++) {
+          if(sf->FindFlags & SMB2_FIND_FLAG_RESTART_SCANS)     // gestire...
+            ;
   				BOOL bWorking = FindFirst(ASTERISKS/*mask*/,ATTR_MASK,&finder) >= 0;
           n=0;
           bufsize=0;
@@ -1001,6 +1190,11 @@ void SMB2OnReceive() {
                 uniEncode(finder.filename,(uint8_t*)sfri4->FileName);
                 sfri4->Reserved=0;
                 sfri4->FilenameLength=strlen(finder.filename)*2;
+                break;
+              case FileIdBothDirectoryInformation:
+                uniEncode(finder.filename,(uint8_t*)sfri5->FileName);
+                sfri5->Reserved=0;
+                sfri5->FilenameLength=strlen(finder.filename)*2;
                 break;
               case FileInformationClass_Reserved:
                 break;
@@ -1052,14 +1246,17 @@ void SMB2OnReceive() {
                   break;
                 }
               switch(sf->InfoLevel) {
-                case FileIdBothDirectoryInformation:
-                  sfri5->Reserved2=0;
                 case FileIdFullDirectoryInformation:
                   sfri3->Reserved=0;
-                  //sfri3->FileID;
+                  sfri3->FileID=n  +1;   // ev. fare...
                   break;
                 case FileIdExtdDirectoryInformation:
                   //sfri->reparsePoint
+                  break;
+                case FileIdBothDirectoryInformation:
+                  sfri5->Reserved=0;
+                  sfri5->Reserved2=0;
+                  sfri5->FileID=n  +1;   // ev. fare...
                   break;
                 case FileId64ExtdDirectoryInformation:
                 case FileId64ExtdBothDirectoryInformation:
@@ -1187,6 +1384,12 @@ void SMB2OnReceive() {
 				{
 				SMB2_GETINFO *sgi;
 				SMB2_GETINFO_RESPONSE *sgr;
+        
+				if(SMB2Server.sessionid != sh->SessionID)
+					goto errore_sid2;
+				if(SMB2Server.treeid != sh->TreeID)
+					goto errore_tid2;
+
 //				i=Receive(&myBuf,sizeof(SMB2_GETINFO ));
 				sgi=(SMB2_GETINFO*)((char*)rxBuffer+sizeof(SMB2_HEADER));
 				if(sgi->Size.size != 0x29)
@@ -1470,6 +1673,12 @@ void SMB2OnReceive() {
 				SMB2_SETINFO *ssi;
 				SMB2_SETINFO_RESPONSE *ssr;
 				char nometemp[64],nometemp2[64];
+        
+				if(SMB2Server.sessionid != sh->SessionID)
+					goto errore_sid2;
+				if(SMB2Server.treeid != sh->TreeID)
+					goto errore_tid2;
+
 //				i=Receive(&myBuf,sizeof(SMB2_SETINFO));
 				ssi=(SMB2_SETINFO*)((char*)rxBuffer+sizeof(SMB2_HEADER));
 				if(ssi->Size.size != 0x21)
@@ -1666,6 +1875,9 @@ no_disc:
 errore_sid:
 errore_tid:
 errore_pid:
+errore_sid2:
+errore_tid2:
+errore_pid2:
 errore_sig:
 errore_size:
 errore_guid:
@@ -1709,10 +1921,14 @@ SMB2_HEADER *prepareSMB2header(SMB2_HEADER *sh,uint32_t command,uint32_t status,
 	sh->Flags=SMB2_FLAG_RESPONSE;
 	sh->ChainOffset=0;
 	sh->MessageID=SMB2Server.msgcntS;
-	sh->ProcessID=SMB2Server.processid;
-	sh->TreeID=SMB2Server.treeid;
-	sh->SessionID=session;
-	memcpy(sh->Signature,&SMB2Server.signature,sizeof(sh->Signature));
+	if(sh->Command != SMB2_COM_KEEPALIVE) {		// v. sopra
+  	sh->ProcessID=SMB2Server.processid;
+    sh->TreeID=SMB2Server.treeid;
+    sh->SessionID=session;
+		}
+	else
+		sh->ProcessID=sh->TreeID=sh->SessionID=0;
+	memcpy(sh->Signature,&SMB2Server.signature,sizeof(sh->Signature));// vedere se keepalive...
 
 	return sh;
 	}

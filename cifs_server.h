@@ -24,7 +24,7 @@ typedef unsigned long ULONG;		// 32 unsigned bits
 typedef struct __attribute__((__packed__)) {
   ULONG LowPart;
   LONG HighPart;
-	} LARGE_INTEGER_2;				// 64 bits of data			c'è già in windows!
+	} LARGE_INTEGER_2;				// 64 bits of data			(c'è già in windows!
 
 typedef struct __attribute__((__packed__)) {
 	ULONG LowTime;
@@ -173,7 +173,7 @@ typedef struct __attribute__((__packed__)) {
 	USHORT Flags;		// wireshark non lo indica
 	} SMB2_CLOSE_SESSION,SMB2_TREE_DISCONNECT,
 		SMB2_ECHO_REQUEST,SMB2_ECHO_RESPONSE,		// vabbe' :)
-		SMB2_CANCEL_REQUEST;
+		SMB2_CANCEL_REQUEST,SMB2_KEEPALIVE;
 
 typedef struct __attribute__((__packed__)) {
 	union __attribute__((__packed__)) {
@@ -210,6 +210,8 @@ typedef struct __attribute__((__packed__)) {
 	UCHAR Blob[  256];		// forse andrebbe dinamico..
 	} SMB2_FIND;
 
+   
+    
 typedef struct __attribute__((__packed__)) {
 	union __attribute__((__packed__)) {
 		struct __attribute__((__packed__)) {
@@ -373,10 +375,10 @@ enum {
 	FileIdAllExtdBothDirectoryInformation=0x51,		//FileId64ExtdBothDirectoryInformation plus a 128-bit file ID.
 	FileInformationClass_Reserved=0x64	//This value MUST be reserved and MUST be ignored on receipt
 	};
-#define SMB2_RESTART_SCANS 0x01 //The server is requested to restart the enumeration from the beginning as specified in section 3.3.5.18.
-#define SMB2_RETURN_SINGLE_ENTRY 0x02 // The server is requested to only return the first entry of the search results.
-#define SMB2_INDEX_SPECIFIED 0x04 //The server is requested to return entries beginning at the byte number specified by FileIndex.
-#define SMB2_REOPEN 0x10 //The server is requested to restart the enumeration from the beginning, and the search pattern is to be changed to the provided value.
+#define SMB2_FIND_FLAG_RESTART_SCANS 0x01 //The server is requested to restart the enumeration from the beginning as specified in section 3.3.5.18.
+#define SMB2_FIND_FLAG_RETURN_SINGLE_ENTRY 0x02 // The server is requested to only return the first entry of the search results.
+#define SMB2_FIND_FLAG_INDEX_SPECIFIED 0x04 //The server is requested to return entries beginning at the byte number specified by FileIndex.
+#define SMB2_FIND_FLAG_REOPEN 0x10 //The server is requested to restart the enumeration from the beginning, and the search pattern is to be changed to the provided value.
 
 typedef struct __attribute__((__packed__)) {
 	union __attribute__((__packed__)) {
@@ -433,6 +435,8 @@ typedef struct __attribute__((__packed__)) {
 	UCHAR FileGUID[16];
 	} SMB2_CLOSEFILE;
 
+#define SMB2_CLOSE_FLAG_POSTQUERY_ATTR 1 //
+
 typedef struct __attribute__((__packed__)) {
 	union __attribute__((__packed__)) {
 		struct __attribute__((__packed__)) {
@@ -452,9 +456,173 @@ typedef struct __attribute__((__packed__)) {
 	ULONG MaxOutSize;
 	ULONG Flags;
 	ULONG Reserved2;
-	USHORT MaxInReferralLevel;
-	UCHAR Blob[  256];		// forse andrebbe dinamico..
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
+			USHORT MaxInReferralLevel;
+			// ecc
+			};
+		struct __attribute__((__packed__)) {
+			UCHAR Version;
+			UCHAR VersionMinor;
+			UCHAR Type;
+			UCHAR Flags;
+			ULONG DataRepresentation;
+			USHORT FragLength;
+			USHORT AuthLength;
+			ULONG CallID;
+			USHORT MaxXmitFrag;
+			USHORT MaxRecvFrag;
+			ULONG AssocGroup;
+			UCHAR NumCtxItems;
+			UCHAR pad[3];
+			struct __attribute__((__packed__)) {
+				USHORT ContextID;
+				UCHAR NumTransItems;
+				UCHAR pad;
+				UCHAR Interface[16];			// guid
+				UCHAR InterfaceVersion;
+				UCHAR InterfaceVersionMinor;
+				UCHAR TransferSyntax[16];			// guid
+				ULONG Version;
+				} CtxItems[1];		// ev dinamico...
+			} DCERPC;
+		struct __attribute__((__packed__)) {
+			UCHAR Version;
+			UCHAR VersionMinor;
+			UCHAR Type;
+			UCHAR Flags;
+			ULONG DataRepresentation;
+			USHORT FragLength;
+			USHORT AuthLength;
+			ULONG CallID;
+			ULONG AllocHint;
+			USHORT ContextID;
+			USHORT Opnum;
+      struct __attribute__((__packed__)) {        // per Call request
+        ULONG PtrToServer;
+        ULONG PtrToLevel;
+        ULONG Ctr;
+        ULONG ReferentID;	
+        ULONG Count;
+        ULONG PtrToArray;
+        } CtrItems[1];		// ev dinamico...
+      ULONG MaxBuffer;
+      ULONG PtrToResumeHandle;
+      ULONG ResumeHandle;
+			} SRVSVC;
+		UCHAR Blob[  256];		// "forse" andrebbe dinamico..
+		};
 	} SMB2_IOCTL;
+
+typedef struct __attribute__((__packed__)) {
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
+			unsigned short dynamicPart:1;
+			unsigned short fixedPart:15;
+			};
+		USHORT size;
+		} Size;
+	USHORT Reserved;
+	ULONG Function;
+	UCHAR GUID[16];
+	ULONG BlobInOffset;
+	ULONG BlobInLength;
+	ULONG BlobOutOffset;
+	ULONG BlobOutLength;
+	ULONG Flags;
+	ULONG Reserved2;
+	union __attribute__((__packed__)) {
+		struct __attribute__((__packed__)) {
+			USHORT MaxInReferralLevel;
+			// ecc
+			};
+		struct __attribute__((__packed__)) {
+			UCHAR Version;
+			UCHAR VersionMinor;
+			UCHAR Type;
+			UCHAR Flags;
+			ULONG DataRepresentation;
+			USHORT FragLength;
+			USHORT AuthLength;
+			ULONG CallID;
+			USHORT MaxXmitFrag;
+			USHORT MaxRecvFrag;
+			ULONG AssocGroup;
+			USHORT SecondaryAddrLen;
+			CHAR SecondaryAddr[13];		// \PIPE\SRVSVC 0
+			UCHAR pad;
+			UCHAR NumCtxItems;
+			UCHAR pad2[3];
+			struct __attribute__((__packed__)) {
+				USHORT AckResult;
+				USHORT pad;
+				UCHAR TransferSyntax[16];
+				ULONG SyntaxVer;
+				} CtxItems[1];		// ev dinamico...
+			} DCERPC;
+		struct __attribute__((__packed__)) {
+			UCHAR Version;
+			UCHAR VersionMinor;
+			UCHAR Type;
+			UCHAR Flags;
+			ULONG DataRepresentation;
+			USHORT FragLength;
+			USHORT AuthLength;
+			ULONG CallID;
+			ULONG AllocHint;
+			USHORT ContextID;
+			UCHAR CancelCount;
+			UCHAR pad;
+      ULONG PtrToLevel;
+      struct __attribute__((__packed__)) {        // per Call request/response
+        ULONG Ctr;
+        ULONG ReferentID;	
+				ULONG Count;
+	      struct __attribute__((__packed__)) {        // 
+	        ULONG ReferentID;	
+					ULONG MaxCount;
+					struct __attribute__((__packed__)) {
+						ULONG ReferentIDName /*PtrToName*/;
+						ULONG Type;
+						ULONG ReferentIDComment;
+						} Array[3];     // ovviamente dinamico...
+	        } Ctr1Items[1];		// ev dinamico...
+        } CtrItems[1];		// ev dinamico...
+	// seguono poi i vari elementi,
+			ULONG MaxCount1;     // = Count
+			ULONG Offset1;
+			ULONG Count1;        // lungh. unicode, min=1, se vuoto
+			UCHAR Name1[12];
+			ULONG MaxCount2;
+			ULONG Offset2;
+			ULONG Count2;   
+			UCHAR Commento2[24];
+			ULONG MaxCount3;
+			ULONG Offset3;
+			ULONG Count3;   
+			UCHAR Name3[10+2];		// pad a dword  CIRCA, perché l'ultimo non lo vuole... verificare
+			ULONG MaxCount4;
+			ULONG Offset4;
+			ULONG Count4;   
+			UCHAR Commento4[2+2];
+			ULONG MaxCount5;
+			ULONG Offset5;
+			ULONG Count5;   
+			UCHAR Name5[10+2];
+			ULONG MaxCount6;
+			ULONG Offset6;
+			ULONG Count6;   
+			UCHAR Commento6[22];
+
+      USHORT PtrToTotalEntries;
+      ULONG TotalEntries;
+      ULONG ResumeHandleReferentID /*PtrToResumeHandle*/;
+      ULONG ResumeHandle;
+      ULONG WindowsError;
+			} SRVSVC;
+		UCHAR Blob[  256];		// "forse" andrebbe dinamico..
+		};
+	} SMB2_IOCTL_RESPONSE;
 
 typedef struct __attribute__((__packed__)) {
 	union __attribute__((__packed__)) {
@@ -501,7 +669,7 @@ typedef struct __attribute__((__packed__)) {
 	USHORT Unknown;		// ...wireshark
   } SMB2_FILESTANDARDINFO;
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	uint64_t CreateTime;
 	ULONG SerialNumber;
 	uint32_t LabelLength;
@@ -509,7 +677,7 @@ typedef struct {
 	UCHAR Label[  256];		// forse andrebbe dinamico..
   } SMB2_FILEVOLUMEINFO;
   
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	uint64_t AllocSize;
 	uint64_t CallerFreeUnits;
 	uint64_t ActualFreeUnits;
@@ -517,19 +685,19 @@ typedef struct {
 	ULONG SectorsSize;
   } SMB2_FILEVOLUMESIZEINFO;
   
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	ULONG Attrib;
 	uint32_t MaxLabelLength;
 	uint32_t LabelLength;
 	UCHAR Label[  256];		// forse andrebbe dinamico..
   } SMB2_FSINFO;
   
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	uint32_t Type;
 	uint32_t Attributes;
   } SMB2_FSDEVICEINFO;
   
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	uint8_t boh[24];
 	uint64_t Threshold;
 	uint64_t Limit;
@@ -664,7 +832,7 @@ typedef struct __attribute__((__packed__)) {
 	UCHAR Blob[  256];		// v. SMB2_FIND_RESPONSE_INFO
   } SMB2_FIND_RESPONSE;
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	ULONG NextOffset;
 	ULONG FileIndex;
 	uint64_t CreationTime;
@@ -677,7 +845,7 @@ typedef struct {
 	ULONG FilenameLength;
 	uint8_t FileName[  256];		// 
   } SMB2_FIND_RESPONSE_INFO1;		// FileDirectoryInformation
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	ULONG NextOffset;
 	ULONG FileIndex;
 	uint64_t CreationTime;
@@ -691,7 +859,7 @@ typedef struct {
 	ULONG EASize;
 	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
   } SMB2_FIND_RESPONSE_INFO2;		// FileFullDirectoryInformation
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	ULONG NextOffset;
 	ULONG FileIndex;
 	uint64_t CreationTime;
@@ -707,7 +875,7 @@ typedef struct {
 	uint64_t FileID;		// SOLO se richiesto! occhio al tipo richiesta, fare diverse struct...
 	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
   } SMB2_FIND_RESPONSE_INFO3;		// FileIdFullDirectoryInformation
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	ULONG NextOffset;
 	ULONG FileIndex;
 	uint64_t CreationTime;
@@ -726,7 +894,7 @@ typedef struct {
 //	uint64_t FileID;		// SOLO se richiesto! occhio al tipo richiesta, fare diverse struct...
 	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
   } SMB2_FIND_RESPONSE_INFO4;		// FileBothDirectoryInformation; sono 104byte + len(Filename) paddato a 8, ciascuna, v. NextOffset
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	ULONG NextOffset;
 	ULONG FileIndex;
 	uint64_t CreationTime;
@@ -745,13 +913,13 @@ typedef struct {
 	uint64_t FileID;		// SOLO se richiesto! occhio al tipo richiesta, fare diverse struct...
 	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
   } SMB2_FIND_RESPONSE_INFO5;		// FileIdBothDirectoryInformation
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	ULONG NextOffset;
 	ULONG FileIndex;
 	ULONG FilenameLength;
 	uint8_t FileName[  256];		// dinamico/su più pacchetti, basato su Length (unicode) e paddato a 4 o forse 8
   } SMB2_FIND_RESPONSE_INFO6;		// FileNamesInformation
-typedef struct {
+typedef struct __attribute__((__packed__)) {
 	ULONG NextOffset;
 	ULONG FileIndex;
 	uint64_t CreationTime;
@@ -846,7 +1014,7 @@ typedef struct __attribute__((__packed__)) {
 	ULONG Attrib;
   } SMB2_CLOSE_RESPONSE;
 
-typedef struct __attribute__((__packed__)) {
+/*typedef struct __attribute__((__packed__)) {      no v. sopra, verificare
 	union __attribute__((__packed__)) {
 		struct __attribute__((__packed__)) {
 			unsigned short dynamicPart:1;
@@ -858,10 +1026,11 @@ typedef struct __attribute__((__packed__)) {
 	UCHAR Reserved;
 	ULONG Count;
 	UCHAR ErrorData;
-  } SMB2_IOCTL_RESPONSE;
+  } SMB2_IOCTL_RESPONSE;*/
 
-#define FSCTL_CREATE_GET_OID 0x000900c0
-#define FSCTL_CREATE_GET_REPARSEPOINT 0x000900a8
+#define SMB2_FSCTL_CREATE_GET_OID 0x000900c0
+#define SMB2_FSCTL_CREATE_GET_REPARSEPOINT 0x000900a8
+#define SMB2_FSCTL_PIPE_TRANSCEIVE 0x0011c017
 
 
 typedef struct __attribute__((__packed__)) {
