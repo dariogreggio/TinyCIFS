@@ -346,12 +346,14 @@ void SMB2OnReceive() {
 		if(sh->Command != SMB2_COM_KEEPALIVE) {		// questo arriva senza mai nulla! e idem esce senza mai nulla, v.
       if(SMB2Server.sessionid && SMB2Server.sessionid != sh->SessionID)
         goto errore_sid;
-      if(SMB2Server.treeid && SMB2Server.treeid != sh->TreeID)
-        goto errore_tid;
       if(SMB2Server.processid && SMB2Server.processid != sh->ProcessID)
         goto errore_pid;
   //    if(memcmp(SMB2Server.signature,sh->Signature,sizeof(SMB2Server.signature))
   //      goto errore_sig;
+			if(sh->Command != SMB2_COM_TREECONNECT) {		// android pare mandare una Connect senza prec. Disconnect...
+        if(SMB2Server.treeid && SMB2Server.treeid != sh->TreeID)
+          goto errore_tid;
+        }
       }
     
 		switch(sh->Command) {
@@ -552,6 +554,15 @@ void SMB2OnReceive() {
 				SMB2Send(myBuf);
 
         memset(&SMB2Server.signature,0,sizeof(SMB2Server.signature));
+				*SMB2Server.curfile=0;
+				*SMB2Server.curtree=0;
+				SMB2Server.sessionid=0;
+				SMB2Server.processid=0;
+				SMB2Server.treeid=0;
+				SMB2Server.sessionstate=0;
+				if(SMB2Server.file)
+					FSfclose(SMB2Server.file);
+				SMB2Server.file=NULL;
 				SMB2Server.sessionstate=0;
 				}
 				break;
@@ -652,6 +663,9 @@ void SMB2OnReceive() {
 				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_TREEDISCONNECT_RESPONSE));
 				SMB2Send(myBuf);
 
+				if(SMB2Server.file)
+					FSfclose(SMB2Server.file);
+				SMB2Server.file=NULL;
 				*SMB2Server.curfile=0;
 				*SMB2Server.curtree=0;
 				SMB2Server.treeid=0;
@@ -721,12 +735,12 @@ void SMB2OnReceive() {
 					else {
 						if(stricmp(nomefile,srvsvc)) {		
   						strcpy(SMB2Server.curfile,nomefile);
-              if(scf->AccessMask & SMB2_ACCESS_READ) {
+							if(scf->AccessMask & (SMB2_ACCESS_READ | SMB2_ACCESS_GENERICREAD | SMB2_ACCESS_GENERICEXEC)) {
                 SMB2Server.file=FSfopen(nomefile,OPEN_READ,SHARE_READ /*    | shareDenyWrite*/);
                 i=SMB2Server.file != NULL ? 1 : 0;
                 scr->Action=i ? 1 : 0;			// 
                 }
-              else if(scf->AccessMask & SMB2_ACCESS_WRITE) {
+							else if(scf->AccessMask & (SMB2_ACCESS_WRITE | SMB2_ACCESS_GENERICWRITE)) {
                 SMB2Server.file=FSfopen(nomefile,OPEN_WRITE,SHARE_READWRITE /*| shareDenyNone*/);
                 i=SMB2Server.file != NULL ? 1 : 0;
                 scr->Action=i ? 2 : 0;			// FINIRE con create opp no
@@ -874,7 +888,7 @@ void SMB2OnReceive() {
 				srf=(SMB2_READFILE*)((char*)rxBuffer+sizeof(SMB2_HEADER));
 				if(srf->Size.size != 0x31)
 					goto errore_size;
-				if(memcmp(srf->FileGUID,SMB2Server.fileguid,16))
+				if(!cmpGUID(srf->FileGUID,SMB2Server.fileguid))
 					goto errore_guid;
 
 				SMB2Server.msgcntR=sh->MessageID;
@@ -886,20 +900,24 @@ void SMB2OnReceive() {
 				FSfseek(SMB2Server.file,srf->Offset,SEEK_SET);
 				srr->BlobOffset=0x50;
         n2=min(65536 /*MaxTransaction Size*/,srf->Length);    // VERIFICARE se c'è tutto :)
-        srr->BlobLength=srf->Length;    // VERIFICARE se c'è tutto :)
+        n2=min(n2,SMB2Server.file->size-SMB2Server.file->seek);
+        srr->BlobLength=n2;    // (VERIFICARE se c'è tutto :)
 // ecco        srr->BlobLength=n;
         srr->RemainingBytes=srf->Length-n2;
         srr->Reserved=srr->Reserved2=0;
         
-				prepareSMB2header(sh,SMB2_COM_READ,  /*?*/ STATUS_OK,SMB2Server.sessionid,1,1);
+				prepareSMB2header(sh,SMB2_COM_READ, SMB2Server.file->size > SMB2Server.file->seek ? STATUS_OK : STATUS_END_OF_FILE,SMB2Server.sessionid,1,1);
 				*(DWORD*)myBuf=htonl(sizeof(SMB2_HEADER)+sizeof(SMB2_READ_RESPONSE)-sizeof(srr->Blob)+srr->BlobLength);
         sendEx(TCPDataSocket2 /*SMB2Server.sock*/,myBuf,sizeof(SMB2_HEADER)+4+sizeof(SMB2_READ_RESPONSE)-sizeof(srr->Blob));
 
         n=0;
         while(n<n2) {    // il max sarebbe MaxTransaction da Negotiate
           i=FSfread((char*)myBuf,1,256,SMB2Server.file);		// v. sopra
-          sendEx(TCPDataSocket2 /*SMB2Server.sock*/,myBuf,i);
+          if(i)
+            sendEx(TCPDataSocket2 /*SMB2Server.sock*/,myBuf,i);
           n+=i;
+          if(i != 256)    // NON deve capitare, e dare errore ev.
+            break;
           }
 				SMB2Server.fileoffset=FSftell(SMB2Server.file);
 
@@ -921,7 +939,7 @@ void SMB2OnReceive() {
 				swf=(SMB2_WRITEFILE*)((char*)rxBuffer+sizeof(SMB2_HEADER));
 				if(swf->Size.size != 0x31)
 					goto errore_size;
-				if(memcmp(swf->FileGUID,SMB2Server.fileguid,16))
+				if(!cmpGUID(swf->FileGUID,SMB2Server.fileguid))
 					goto errore_guid;
 
 				SMB2Server.msgcntR=sh->MessageID;
@@ -1427,7 +1445,7 @@ void SMB2OnReceive() {
                 sgr->BlobOffset=0x0048;
                 {
                 SMB2_FILESTANDARDINFO *sfsi=(SMB2_FILESTANDARDINFO*)((char*)myBuf+4+sgr->BlobOffset);
-                sfsi->AllocSize=fs.st_size;
+                sfsi->AllocSize=(fs.st_size+MEDIA_SECTOR_SIZE-1) & -MEDIA_SECTOR_SIZE;		// sector size??
                 sfsi->EOFSize=fs.st_size;
                 sfsi->LinkCount=0;
                 sfsi->DeletePending=0;
@@ -1486,11 +1504,38 @@ void SMB2OnReceive() {
                 i=STATUS_OK;
                 break;
               case SMB2_FILE_ALL_INFO:
+                {
                 sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
-                sgr->BlobLength=100+strlen(SMB2Server.curdir)*2+strlen(SMB2Server.curtree)*2;
                 sgr->BlobOffset=0x0048;
-                // mettere TUTTE le info, v. ; incluso path completo del file
+                SMB2_FILEALLINFO *sfai=(SMB2_FILEALLINFO*)((char*)myBuf+4+sgr->BlobOffset);
+								char nometemp[64];
+                sfai->CreateTime=gettime(fs.st_ctime);
+                sfai->AccessTime=gettime(fs.st_atime);
+                sfai->WriteTime=gettime(fs.st_mtime);
+                sfai->ModifiedTime=gettime(fs.st_mtime);
+								sfai->Attrib=fs.st_mode;
+                sfai->Unknown=0;
+                sfai->AllocSize=(fs.st_size+MEDIA_SECTOR_SIZE-1) & -MEDIA_SECTOR_SIZE;		// sector size??
+                sfai->EOFSize=fs.st_size;
+                sfai->LinkCount=1;
+                sfai->DeletePending=0;
+                sfai->IsDirectory=fs.st_mode & ATTR_DIRECTORY ? 1 : 0;
+								sfai->pad=0;
+								sfai->FileID=1;		// mettere...
+								sfai->EASize=0;
+								sfai->AccessMask=0x00000088;		// READ beh finire :)
+								sfai->Position=0;			//??
+								sfai->Mode=0;
+								sfai->Alignment=0x01000000;		// boh
+								strcpy(nometemp,SMB2Server.curtree);
+								strcat(nometemp,"\\");
+								strcat(nometemp,SMB2Server.curdir);		// CONTROLLARE i backslash!
+								strcat(nometemp,SMB2Server.curfile);
+								uniEncode(nometemp,sfai->FileName);
+								sfai->FilenameLength=strlen(nometemp)*2;
+                sgr->BlobLength=100+sfai->FilenameLength;
                 i=STATUS_OK;
+                }
                 break;
               case SMB2_FILE_ALTERNATE_NAME_INFO:
                 sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
@@ -1550,16 +1595,16 @@ void SMB2OnReceive() {
                 sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
                 sgr->BlobOffset=0x0048;
                 {
-                SMB2_FILEVOLUMEINFO *sfvi=(SMB2_FILEVOLUMEINFO*)((char*)myBuf+4+sgr->BlobOffset);
+                SMB2_VOLUMEINFO *svi=(SMB2_VOLUMEINFO*)((char*)myBuf+4+sgr->BlobOffset);
                 FILETIMEPACKED t /*={2026-1980,3,15,21,39,0}*/;
                 char buf[16];
                 FSgetVolume(buf,(uint32_t*)&t);
-                uniEncode(buf /*"WIFI_PEN"*/,sfvi->Label);
-                sfvi->LabelLength=2*strlen(buf);
-                sfvi->CreateTime=PackedTimeToFiletime(t);
-                sfvi->Reserved=0;
-                sfvi->SerialNumber=MAKELONG(0/*VERNUML*/,1/*VERNUMH*/);
-                sgr->BlobLength=18+sfvi->LabelLength;
+                uniEncode(buf /*"WIFI_PEN"*/,svi->Label);
+                svi->LabelLength=2*strlen(buf);
+                svi->CreateTime=PackedTimeToFiletime(t);
+                svi->Reserved=0;
+                svi->SerialNumber=MAKELONG(0/*VERNUML*/,1/*VERNUMH*/);
+                sgr->BlobLength=18+svi->LabelLength;
                 }
                 i=STATUS_OK;
                 break;
@@ -1609,25 +1654,25 @@ void SMB2OnReceive() {
                 break;
               case SMB2_FS_FULL_SIZE_INFO:
                 sgr->Size.dynamicPart=1;		sgr->Size.fixedPart=4;
-                sgr->BlobLength=sizeof(SMB2_FILEVOLUMESIZEINFO);
+                sgr->BlobLength=sizeof(SMB2_VOLUMESIZEINFO);
                 sgr->BlobOffset=0x0048;
                 {
-                SMB2_FILEVOLUMESIZEINFO *sfvsi=(SMB2_FILEVOLUMESIZEINFO*)((char*)myBuf+4+sgr->BlobOffset);
+                SMB2_VOLUMESIZEINFO *svsi=(SMB2_VOLUMESIZEINFO*)((char*)myBuf+4+sgr->BlobOffset);
                 FS_DISK_PROPERTIES fsdp;
                 fsdp.new_request=1;
                 do {
                   FSGetDiskProperties(&fsdp);
                   } while(fsdp.properties_status == FS_GET_PROPERTIES_STILL_WORKING);
                 if(fsdp.properties_status==FS_GET_PROPERTIES_NO_ERRORS) {
-                  sfvsi->ActualFreeUnits=fsdp.results.free_clusters;		// o AllocSize??
-                  sfvsi->CallerFreeUnits=fsdp.results.free_clusters;
-                  sfvsi->CallerFreeUnits=fsdp.results.free_clusters;
-                  sfvsi->SectorsSize=fsdp.results.sector_size;
-                  sfvsi->SectorsPerUnit=fsdp.results.sectors_per_cluster;
+                  svsi->ActualFreeUnits=fsdp.results.free_clusters;		// o AllocSize??
+                  svsi->CallerFreeUnits=fsdp.results.free_clusters;
+                  svsi->CallerFreeUnits=fsdp.results.free_clusters;
+                  svsi->SectorsSize=fsdp.results.sector_size;
+                  svsi->SectorsPerUnit=fsdp.results.sectors_per_cluster;
                   }
                 else
                   ;     // errore...
-                sfvsi->AllocSize=1;
+                svsi->AllocSize=1;
                 }
                 i=STATUS_OK;
                 break;
@@ -1700,11 +1745,12 @@ void SMB2OnReceive() {
 //            strcpy(nometemp,SMB2Server.curtree);
 //            strcat(nometemp,"\\");
 //            strcat(nometemp,SMB2Server.curfile);
+            strcpy(nometemp,SMB2Server.curfile);
             switch(ssi->InfoLevel) {
               // verificare quelli che non ci sono! e finire
               case SMB2_FILE_BASIC_INFO:
 								{
-								SMB2_FILEBASICINFO *sfbi=(SMB2_FILEBASICINFO*)((char*)ssr+8+ssi->InfoOffset);
+								SMB2_FILEBASICINFO *sfbi=(SMB2_FILEBASICINFO*)((char*)ssi-sizeof(SMB2_HEADER)+ssi->InfoOffset);
                 {FSFILE *f;
                 f=FSfopen(nometemp2,OPEN_READ,SHARE_NONE);
 								i=FSattrib(f,sfbi->Attrib) ? STATUS_OK : STATUS_UNSUCCESSFUL;
@@ -1737,12 +1783,12 @@ void SMB2OnReceive() {
               case SMB2_FILE_RENAME_INFO:
                 ssr->Size.dynamicPart=1;		ssr->Size.fixedPart=4;
                 {
-                SMB2_FILERENAMEINFO *sfri=(SMB2_FILERENAMEINFO*)((char*)myBuf+4+ssi->InfoOffset);
+                SMB2_FILERENAMEINFO *sfri=(SMB2_FILERENAMEINFO*)((char*)ssi-sizeof(SMB2_HEADER)+ssi->InfoOffset);
 
                 uniDecode((uint8_t*)sfri->Blob,sfri->FilenameLength,nometemp2);		//
                 {FSFILE *f;
                 f=FSfopen(nometemp,OPEN_READ,SHARE_NONE);
-                i=FSrename(nometemp2,f) ? STATUS_OK : STATUS_OBJECT_NAME_NOT_FOUND;
+                i=FSrename(nometemp2,f) ? STATUS_OBJECT_NAME_NOT_FOUND : STATUS_OK;
                 FSfclose(f);
                 }
                 ssr->BlobLength=0;
@@ -1769,7 +1815,7 @@ void SMB2OnReceive() {
                 break;
               case SMB2_FILE_ENDOFFILE_INFO:
                 ssr->Size.dynamicPart=0;		ssr->Size.fixedPart=1;
-                FSfseek(SMB2Server.file,(uint32_t)*(uint64_t*)((char*)myBuf+ssi->InfoOffset),SEEK_SET);		// mah verificare
+                FSfseek(SMB2Server.file,(uint32_t)*(uint64_t*)((char*)ssi-sizeof(SMB2_HEADER)+ssi->InfoOffset),SEEK_SET);		// mah verificare
                 ssr->BlobLength=0;
                 ssr->BlobOffset=0;
                 i=STATUS_OK;

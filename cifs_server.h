@@ -671,11 +671,34 @@ typedef struct __attribute__((__packed__)) {
 
 typedef struct __attribute__((__packed__)) {
 	uint64_t CreateTime;
+	uint64_t AccessTime;
+	uint64_t WriteTime;
+	uint64_t ModifiedTime;
+	ULONG Attrib;
+	ULONG Unknown;		// ...wireshark
+	uint64_t AllocSize;
+	uint64_t EOFSize;
+	ULONG LinkCount;
+  uint8_t DeletePending;
+  uint8_t IsDirectory;
+	USHORT pad;
+	uint64_t FileID;
+	ULONG EASize;
+	ULONG AccessMask;
+	uint64_t Position;
+	ULONG Mode;
+	ULONG Alignment;
+	ULONG FilenameLength;
+	UCHAR FileName[  256];		// forse andrebbe dinamico..
+  } SMB2_FILEALLINFO;
+
+typedef struct __attribute__((__packed__)) {
+	uint64_t CreateTime;
 	ULONG SerialNumber;
 	uint32_t LabelLength;
 	USHORT Reserved;
 	UCHAR Label[  256];		// forse andrebbe dinamico..
-  } SMB2_FILEVOLUMEINFO;
+  } SMB2_VOLUMEINFO;
   
 typedef struct __attribute__((__packed__)) {
 	uint64_t AllocSize;
@@ -683,7 +706,7 @@ typedef struct __attribute__((__packed__)) {
 	uint64_t ActualFreeUnits;
 	ULONG SectorsPerUnit;
 	ULONG SectorsSize;
-  } SMB2_FILEVOLUMESIZEINFO;
+  } SMB2_VOLUMESIZEINFO;
   
 typedef struct __attribute__((__packed__)) {
 	ULONG Attrib;
